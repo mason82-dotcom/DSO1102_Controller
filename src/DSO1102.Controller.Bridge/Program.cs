@@ -204,6 +204,63 @@ internal static class Program
             .Select(i => (ushort)((channelLevels[i * 2] << 8) | channelLevels[i * 2 + 1]))
             .ToArray();
 
+        string[] verticalRangeLabels =
+        [
+            "10 mV/div",
+            "20 mV/div",
+            "50 mV/div",
+            "100 mV/div",
+            "200 mV/div",
+            "500 mV/div",
+            "1 V/div",
+            "2 V/div",
+            "5 V/div"
+        ];
+
+        var channel1RangeCalibration = Enumerable.Range(0, 9)
+            .Select(i => new
+            {
+                rangeCode = i,
+                rangeLabel = verticalRangeLabels[i],
+                start = packedCalibrationWords[i * 2],
+                end = packedCalibrationWords[i * 2 + 1]
+            })
+            .ToArray();
+
+        var channel2RangeCalibration = Enumerable.Range(0, 9)
+            .Select(i => new
+            {
+                rangeCode = i,
+                rangeLabel = verticalRangeLabels[i],
+                start = packedCalibrationWords[18 + i * 2],
+                end = packedCalibrationWords[18 + i * 2 + 1]
+            })
+            .ToArray();
+
+        var triggerCalibration = new
+        {
+            selector0 = new
+            {
+                start = packedCalibrationWords[36],
+                end = packedCalibrationWords[37]
+            },
+            selector1 = new
+            {
+                start = packedCalibrationWords[38],
+                end = packedCalibrationWords[39]
+            },
+            currentlyUnusedByDsoSetOffset = new
+            {
+                start = packedCalibrationWords[40],
+                end = packedCalibrationWords[41]
+            },
+            selectorOther = new
+            {
+                start = packedCalibrationWords[42],
+                end = packedCalibrationWords[43]
+            }
+        };
+
         var calibrationA = (ushort)0;
         var calibrationB = (ushort)0;
         var calDataStatus = getCalData(deviceIndex, out calibrationA, out calibrationB);
@@ -237,7 +294,14 @@ internal static class Program
                     rawByteCount = channelLevels.Length,
                     rawBytesExpandedToWords = channelLevels,
                     packedWordCount = packedCalibrationWords.Length,
-                    packedWords = packedCalibrationWords
+                    packedWords = packedCalibrationWords,
+                    decodedLayout = new
+                    {
+                        source = "Verified statically from DSO1102USB.dll dsoSetOffset RVA 0x3180.",
+                        channel1Ranges = channel1RangeCalibration,
+                        channel2Ranges = channel2RangeCalibration,
+                        triggerCalibration
+                    }
                 },
                 calData = new
                 {
