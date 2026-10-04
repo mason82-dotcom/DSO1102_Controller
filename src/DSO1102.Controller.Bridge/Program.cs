@@ -74,8 +74,12 @@ internal static class Program
                 "capture-gnd" => Fail("capture-gnd v1 is disabled because it used an incorrect vendor ABI. Use capture-gnd-v2 after initializing the known profile in the original application."),
                 "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath, "capture-gnd-v2", groundReference: true),
                 "capture-raw" => CaptureGroundBaselineV2(dllPath, "capture-raw", groundReference: false),
+                "capture-400us" => CaptureGroundBaselineV2(dllPath, "capture-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", expectedSampleRateHz: 2_500_000),
+                "capture-1ms" => CaptureGroundBaselineV2(dllPath, "capture-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", expectedSampleRateHz: 1_000_000),
+                "capture-2ms" => CaptureGroundBaselineV2(dllPath, "capture-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", expectedSampleRateHz: 500_000),
+                "capture-4ms" => CaptureGroundBaselineV2(dllPath, "capture-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", expectedSampleRateHz: 250_000),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, exports.")
             };
         }
         catch (Exception ex)
@@ -456,7 +460,13 @@ internal static class Program
         return 0;
     }
 
-    private static int CaptureGroundBaselineV2(string dllPath, string commandName, bool groundReference)
+    private static int CaptureGroundBaselineV2(
+        string dllPath,
+        string commandName,
+        bool groundReference,
+        ushort? timeBaseCode = null,
+        string? timeBaseLabel = null,
+        double? expectedSampleRateHz = null)
     {
         using var library = VendorLibrary.Load(dllPath);
 
@@ -525,19 +535,28 @@ internal static class Program
         if (stateCode != 3)
             return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
 
-        // Exact object-state prefix observed at the original application's real
-        // dsoGetChannelData call for the agreed CH1-GND test profile.
-        //
-        // arg4 points to word 0.
-        // arg5 points 12 bytes later, i.e. word 6.
+        // arg4 points to word 0; arg5 points 12 bytes later (word 6).
         // The live 0x58 channel-level bytes start at word 23.
+        //
+        // Codes 15..18 and the normal word[4] = 6 state were observed directly
+        // in dsoGetChannelData runtime traces while the vendor UI was stepped
+        // through 400 us/div, 1 ms/div, 2 ms/div and 4 ms/div.
         var vendorState = new ushort[256];
-        ushort[] tracedPrefix =
-        [
-            0, 2, 12, 50, 0, 0,
-            64, 192, 64, 192, 128, 0, 0, 256,
-            0, 0, 0, 0, 0, 0, 0, 0, 16368
-        ];
+        ushort[] tracedPrefix = timeBaseCode.HasValue
+            ?
+            [
+                0, 0, timeBaseCode.Value, 50, 6, 0,
+                127, 192, 124, 192, 128, 0, 0, 256,
+                0, 0, 0, 0, 0, 0, 0, 0, 16368
+            ]
+            :
+            [
+                // Earlier single-profile trace retained for backward-compatible
+                // capture-raw / capture-gnd-v2 diagnostics.
+                0, 2, 12, 50, 0, 0,
+                64, 192, 64, 192, 128, 0, 0, 256,
+                0, 0, 0, 0, 0, 0, 0, 0, 16368
+            ];
 
         Array.Copy(tracedPrefix, vendorState, tracedPrefix.Length);
         Array.Copy(channelLevels, 0, vendorState, 23, channelLevels.Length);
@@ -600,9 +619,14 @@ internal static class Program
             },
             profile = new
             {
-                name = "vendor-traced CH1 profile",
+                name = timeBaseCode.HasValue
+                    ? $"vendor-traced {timeBaseLabel} read profile"
+                    : "vendor-traced CH1 profile",
                 requiresOriginalApplicationInitialization = true,
-                triggerSampleWords = tracedPrefix.Take(5).ToArray(),
+                timeBaseCode,
+                timeBaseLabel,
+                expectedSampleRateHz,
+                triggerSampleWords = tracedPrefix.Take(6).ToArray(),
                 calibrationA,
                 calibrationB,
                 channelLevelCount = channelLevels.Length
