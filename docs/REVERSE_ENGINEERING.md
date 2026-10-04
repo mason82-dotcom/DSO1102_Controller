@@ -324,3 +324,44 @@ The first value in each buffer is outside the normal 8-bit ADC range:
 Those values must not be folded into normal ADC noise/Vpp statistics. The bridge now reports raw 16-bit values separately and computes ADC statistics only from values in `0..255`.
 
 Because CH1 was physically tied to GND during this capture, buffer A is currently the leading CH1 candidate: it is markedly flatter than buffer B. Final CH1/CH2 mapping still requires one differential physical test with a known change on one channel.
+
+
+## Stable CH1-GND baseline
+
+A repeated `capture-gnd-v2` run with CH1 physically tied to oscilloscope GND produced a stable 10,240-sample capture:
+
+```text
+stateCode        = 3 (CAPTURE_READY)
+triggerValue     = 3781
+vendorReadResult = 1
+calibrationA/B   = 1 / 12
+```
+
+ADC-range statistics after excluding the single first 16-bit boundary value:
+
+```text
+buffer A:
+  valid samples  = 10239
+  range          = 189..192
+  mean           = 189.9870
+  p-p            = 3 counts
+  stddev         = 0.3910 counts
+
+buffer B:
+  valid samples  = 10239
+  range          = 56..64
+  mean           = 62.3339
+  p-p            = 8 counts
+  stddev         = 0.5172 counts
+```
+
+The first element again appeared outside the 8-bit ADC range:
+
+```text
+buffer A sample[0] = 0xFFFC (-4 signed)
+buffer B sample[0] = 0xFFF4 (-12 signed)
+```
+
+Because this out-of-range value is reproducibly confined to the first element in repeated captures, it is treated as a boundary/special decoder value and excluded from ADC statistics.
+
+Buffer A remains the leading CH1 candidate because CH1 was grounded and buffer A is the flatter of the two baselines. A known driven DC level on CH1 is still required for definitive channel mapping and voltage scaling.
