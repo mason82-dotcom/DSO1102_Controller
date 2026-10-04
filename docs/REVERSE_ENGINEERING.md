@@ -615,3 +615,53 @@ Then switch the vendor UI in this order:
 ```
 
 Argument 4 is the trigger/sample configuration pointer used by the actual waveform read. These captured states are the authoritative source for reconstructing independent bridge captures at each time base.
+
+
+## Direct dsoGetChannelData profile trace
+
+A filtered runtime trace of `dsoGetChannelData` observed 48 calls, suppressed 40 byte-identical argument-4 states, and retained 8 distinct read states.
+
+The normal acquisition states used:
+
+```text
+word[0] = 0
+word[1] = 0
+word[2] = time-base code
+word[3] = 50
+word[4] = 6
+word[5] = 0
+word[6] = 127
+word[7] = 192
+word[8] = 124
+word[9] = 192
+word[10] = 128
+...
+word[13] = 256
+...
+word[22] = 16368
+word[23...] = live channel-level calibration bytes
+```
+
+The read-path time-base codes matched the New-setter trace:
+
+```text
+15 = 400 us/div
+16 = 1 ms/div
+17 = 2 ms/div
+18 = 4 ms/div
+```
+
+The trace then walked back through 18 -> 17 -> 16 -> 15, confirming the changing field is the UI time-base state rather than a one-off initialization value.
+
+A transient first state used `word[4] = 5`; subsequent normal acquisition states consistently used `word[4] = 6`. The bridge therefore uses word[4] = 6 for the new profile-specific read commands.
+
+New read-only diagnostic commands:
+
+```text
+capture-400us
+capture-1ms
+capture-2ms
+capture-4ms
+```
+
+These commands do not call any configuration setter. The vendor application must first initialize the matching time base, then be closed. The bridge only performs capture/read using the runtime-traced decoding structure.
