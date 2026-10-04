@@ -68,7 +68,7 @@ internal static class Program
                 "info" => ReadDeviceInfo(dllPath),
                 "arm" => ArmAndObserve(dllPath, forceTrigger: false),
                 "force" => ArmAndObserve(dllPath, forceTrigger: true),
-                "capture-gnd" => CaptureGroundBaseline(dllPath),
+                "capture-gnd" => Fail("capture-gnd is temporarily disabled until the eight-argument vendor ABI is verified from a before/after runtime trace."),
                 "exports" => CheckExports(dllPath),
                 _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-gnd, exports.")
             };
