@@ -1,6 +1,8 @@
 param(
     [ValidateSet('new','legacy')]
     [string]$Mode = 'new',
+    [int]$MaxCalls = 8,
+    [int]$IdleTimeoutMs = 120000,
     [string]$ExePath = 'C:\Program Files (x86)\DSO-1102 USB\DSO-1102 USB.exe',
     [string]$DllPath = 'C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll'
 )
@@ -21,6 +23,8 @@ if ($Mode -eq 'new') {
 & $traceScript `
   -Export $export `
   -ArgumentCount $argCount `
+  -MaxCalls $MaxCalls `
+  -IdleTimeoutMs $IdleTimeoutMs `
   -ExePath $ExePath `
   -DllPath $DllPath
 
