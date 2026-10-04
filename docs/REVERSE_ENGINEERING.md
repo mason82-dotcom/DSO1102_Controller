@@ -733,3 +733,28 @@ bufferWriteExtentB
 ```
 
 This is a diagnostic estimate based on the zero-initialized guard buffers. It is intended to recover the actual mode-dependent record length before changing the fixed 0x2800 analysis window.
+
+
+## 1 ms/div writes the full 512K channel buffers
+
+After adding whole-buffer write-extent diagnostics, a real `capture-1ms` run showed:
+
+```text
+guardBufferSamplesPerChannel = 524,288
+
+buffer A:
+  lastNonZeroIndex        = 524,287
+  populatedPrefixEstimate = 524,288
+  totalNonZeroValues      = 524,288
+
+buffer B:
+  lastNonZeroIndex        = 524,287
+  populatedPrefixEstimate = 524,288
+  totalNonZeroValues      = 524,288
+```
+
+Thus the earlier fixed 10,240-sample analysis window was only a small prefix of the vendor-decoded record for this mode.
+
+At the locally measured ~5 MS/s sample spacing, 524,288 samples correspond to approximately 104.8576 ms of raw decoded acquisition per channel. This duration is a derived value, not yet a claim about the visible screen width; the vendor application may display only a viewport of the deeper acquisition memory.
+
+The bridge now also analyzes the complete 524,288-sample buffers and reports full-buffer ADC validity, tail samples, plateau statistics, and square-wave timing. This will verify whether the decoded 1 kHz CAL waveform remains coherent across the entire deep-memory record.
