@@ -232,7 +232,7 @@ internal static class Program
                                         Hex = $"0x{value:X8}",
                                         Low16 = (ushort)(value & 0xFFFF),
                                         PointerPreviewHex = TryReadPointerPreview(processInfo.hProcess, value, 128),
-                                        PointerPreviewWords16 = TryReadPointerWords16(processInfo.hProcess, value, 32)
+                                        PointerPreviewWords16 = TryReadPointerWords16(processInfo.hProcess, value, 64)
                                     });
                                 }
 
@@ -361,7 +361,8 @@ internal static class Program
                                         ObservedSequence = observedCallCount,
                                         ReturnAddress = rawStack.Length > 0 ? $"0x{rawStack[0]:X8}" : null,
                                         ReturnEax = $"0x{returnEax:X8}",
-                                        Arguments = snapshots
+                                        Arguments = snapshots,
+                                        Decoded = DecodeKnownCall(exportName, snapshots)
                                     });
                                 }
 
@@ -466,6 +467,149 @@ internal static class Program
                     ? "An entry was captured, but its return was not observed before timeout/process exit."
                     : "No matching call was captured before timeout/process exit."
         };
+    }
+
+    private static object? DecodeKnownCall(string exportName, List<ArgumentSnapshot> arguments)
+    {
+        ArgumentSnapshot? Arg(int index) => arguments.FirstOrDefault(x => x.Index == index);
+
+        static string? RangeLabel(ushort code) => code switch
+        {
+            0 => "10 mV/div",
+            1 => "20 mV/div",
+            2 => "50 mV/div",
+            3 => "100 mV/div",
+            4 => "200 mV/div",
+            5 => "500 mV/div",
+            6 => "1 V/div",
+            7 => "2 V/div",
+            8 => "5 V/div",
+            _ => null
+        };
+
+        static string? CouplingLabel(ushort code) => code switch
+        {
+            0 => "DC",
+            1 => "AC",
+            2 => "GND (vendor software/display mode; hardware relay path is non-AC)",
+            _ => null
+        };
+
+        static ushort? Word(ushort[]? words, int index) =>
+            words is not null && index >= 0 && index < words.Length ? words[index] : null;
+
+        if (exportName.Equals("dsoSetVoltageAndCoupling", StringComparison.Ordinal))
+        {
+            var ch1Range = Arg(2)?.Low16 ?? 0;
+            var ch2Range = Arg(3)?.Low16 ?? 0;
+            var ch1Coupling = Arg(4)?.Low16 ?? 0;
+            var ch2Coupling = Arg(5)?.Low16 ?? 0;
+            var triggerSelector = Arg(6)?.Low16 ?? 0;
+
+            return new
+            {
+                deviceIndex = Arg(1)?.Low16,
+                ch1RangeCode = ch1Range,
+                ch1Range = RangeLabel(ch1Range),
+                ch2RangeCode = ch2Range,
+                ch2Range = RangeLabel(ch2Range),
+                ch1CouplingCode = ch1Coupling,
+                ch1Coupling = CouplingLabel(ch1Coupling),
+                ch2CouplingCode = ch2Coupling,
+                ch2Coupling = CouplingLabel(ch2Coupling),
+                triggerRelaySelector = triggerSelector,
+                externalTriggerRelaySelected = triggerSelector == 3
+            };
+        }
+
+        if (exportName.Equals("dsoSetFilt", StringComparison.Ordinal))
+        {
+            var ch1 = (ushort)((Arg(2)?.Low16 ?? 0) & 1);
+            var ch2 = (ushort)((Arg(3)?.Low16 ?? 0) & 1);
+            var trigger = (ushort)((Arg(4)?.Low16 ?? 0) & 1);
+            var packed = ch1 | (ch2 << 1) | (trigger << 2);
+
+            return new
+            {
+                deviceIndex = Arg(1)?.Low16,
+                ch1BandwidthFilter = ch1 != 0,
+                ch2BandwidthFilter = ch2 != 0,
+                triggerHfRejection = trigger != 0,
+                packedCommandByte2 = $"0x{packed:X2}"
+            };
+        }
+
+        if (exportName.Equals("_dsoSetTrigIn@32", StringComparison.Ordinal))
+        {
+            ushort A(int index) => Arg(index)?.Low16 ?? 0;
+
+            var sourceInput = A(2);
+            var sourceBits = sourceInput switch
+            {
+                0 => 1,
+                1 => 0,
+                >= 2 and <= 4 => 2,
+                _ => A(5) & 0x3
+            };
+
+            var packed =
+                (sourceBits & 0x3) |
+                ((A(4) & 0x1) << 2) |
+                ((A(3) & 0x1) << 3) |
+                ((A(6) & 0x1) << 4) |
+                ((A(7) & 0x3) << 5) |
+                ((A(5) & 0x1) << 7);
+
+            return new
+            {
+                deviceIndex = A(1),
+                sourceSelectorInput = sourceInput,
+                translatedSourceBits = sourceBits,
+                arg3Bit = A(3) & 1,
+                arg4Bit = A(4) & 1,
+                arg5Bit7 = A(5) & 1,
+                arg6Bit = A(6) & 1,
+                arg7Bits = A(7) & 3,
+                packedCommandByte2 = $"0x{packed:X2}",
+                commandValue32 = Arg(8)?.Value,
+                note = "Bit positions are statically verified from DSO1102USB.dll. UI labels for the non-source control bits still require runtime correlation."
+            };
+        }
+
+        if (exportName.Equals("dsoSetOffset", StringComparison.Ordinal))
+        {
+            var state = Arg(2)?.PointerPreviewWords16;
+            var calibration = Arg(6)?.PointerPreviewWords16;
+            var ch1Range = Arg(3)?.Low16 ?? 0;
+            var ch2Range = Arg(4)?.Low16 ?? 0;
+            var selector = Arg(5)?.Low16 ?? 0;
+
+            var thirdStateIndex = selector switch { 0 => 2, 1 => 3, _ => 4 };
+            var thirdCalibrationIndex = selector switch { 0 => 36, 1 => 38, _ => 42 };
+
+            return new
+            {
+                deviceIndex = Arg(1)?.Low16,
+                ch1PositionRaw = Word(state, 0),
+                ch2PositionRaw = Word(state, 1),
+                thirdPathPositionRaw = Word(state, thirdStateIndex),
+                ch1RangeCode = ch1Range,
+                ch1Range = RangeLabel(ch1Range),
+                ch2RangeCode = ch2Range,
+                ch2Range = RangeLabel(ch2Range),
+                thirdPathSelector = selector,
+                ch1CalibrationStart = Word(calibration, checked((int)ch1Range * 2)),
+                ch1CalibrationEnd = Word(calibration, checked((int)ch1Range * 2 + 1)),
+                ch2CalibrationStart = Word(calibration, checked(18 + (int)ch2Range * 2)),
+                ch2CalibrationEnd = Word(calibration, checked(18 + (int)ch2Range * 2 + 1)),
+                thirdCalibrationStart = Word(calibration, thirdCalibrationIndex),
+                thirdCalibrationEnd = Word(calibration, thirdCalibrationIndex + 1),
+                formula = "calibrated = start + (255 - positionRaw) * (end - start) / 255; hardware command value is then scaled by 16",
+                note = "CH1/CH2 range and calibration indexing are statically verified from DSO1102USB.dll."
+            };
+        }
+
+        return null;
     }
 
     private static string? TryReadPointerPreview(IntPtr process, uint value, int length)
@@ -756,6 +900,7 @@ internal static class Program
         public string? ReturnAddress { get; init; }
         public string? ReturnEax { get; init; }
         public List<ArgumentSnapshot> Arguments { get; init; } = [];
+        public object? Decoded { get; init; }
     }
 
     private sealed class ArgumentSnapshot
