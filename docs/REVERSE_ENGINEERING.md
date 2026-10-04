@@ -459,3 +459,58 @@ record duration        = 10.24 ms
 ```
 
 The sample-rate value remains marked as a profile-level inference until the original vendor time-base/sample-rate lookup table is statically recovered.
+
+
+## Time-base setter tracing workflow
+
+To reconstruct the complete DSO-1102 time-base/sample-rate table without guessing USB commands, use the original application as the source of truth and trace its vendor-DLL setter calls.
+
+The helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass \
+  -File .\tools\Trace-Timebase.ps1 \
+  -Mode new
+```
+
+captures the first real call to:
+
+```text
+dsoSetTriggerAndSampleRateNew   (8 arguments)
+```
+
+The legacy path can be inspected with:
+
+```powershell
+powershell -ExecutionPolicy Bypass \
+  -File .\tools\Trace-Timebase.ps1 \
+  -Mode legacy
+```
+
+which targets:
+
+```text
+dsoSetTriggerAndSampleRate      (3 arguments)
+```
+
+Recommended reconstruction procedure:
+
+1. Start the vendor application through the tracer.
+2. Select one known time-base value in the vendor UI.
+3. Trigger one configuration/apply action if needed.
+4. Record the captured setter arguments and pointed-to structure bytes.
+5. Repeat for adjacent time bases.
+6. Correlate the changing structure field with the measured sample period from `capture-raw`.
+
+For the already characterized profile:
+
+```text
+UI time base           = 1 ms/div
+configuration word[2]  = 12
+sample count           = 10,240
+sample-rate candidate  = 1 MS/s
+record duration        = 10.24 ms
+CAL signal period      = ~999.79 samples
+```
+
+The goal is to recover the actual vendor lookup table rather than infer every mode from the nominal front-panel setting.
