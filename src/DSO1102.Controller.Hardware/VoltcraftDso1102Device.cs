@@ -63,12 +63,16 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
         IsConnected = true;
     }
 
-    public Task DisconnectAsync(CancellationToken cancellationToken = default)
+    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        IsConnected = false;
+
+        var bridge = _bridge;
         _bridge = null;
-        return Task.CompletedTask;
+        IsConnected = false;
+
+        if (bridge is not null)
+            await bridge.DisposeAsync();
     }
 
     public Task ApplySettingsAsync(DsoSettings settings, CancellationToken cancellationToken = default)
