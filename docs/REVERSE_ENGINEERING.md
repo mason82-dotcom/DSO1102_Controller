@@ -904,11 +904,55 @@ Current runtime-verified mapping:
 
 | UI time base | Code | Decoded sample rate | Decoded depth/channel | Status |
 | --- | ---: | ---: | ---: | --- |
-| 400 us/div | 15 | ~5 MS/s | not yet re-verified with full-buffer analyzer | sample rate verified |
+| 400 us/div | 15 | ~5 MS/s | 524,288 samples | full-buffer verified |
 | 1 ms/div | 16 | ~5 MS/s | 524,288 samples | full-buffer verified |
 | 2 ms/div | 17 | ~5 MS/s | 524,288 samples | full-buffer verified |
 | 4 ms/div | 18 | ~5 MS/s | 524,288 samples | full-buffer verified |
 
 For codes 16..18, changing Time/div does not change the decoded ADC sample clock or decoded record depth. The visible horizontal scale is therefore implemented downstream as viewport/rendering behavior for those profiles.
 
-The remaining characterization item in this block is a fresh `capture-400us` run with the full-buffer analyzer enabled, to determine whether code 15 also writes the same 524,288-sample deep-memory record.
+All four profiles in this block are now full-buffer verified.
+
+
+## 400 us/div full-buffer verification
+
+A fresh full-buffer `capture-400us` run verifies that time-base code 15 also uses the same decoded ~5 MS/s 512 KiSample deep-memory stream.
+
+Per channel:
+
+```text
+buffer length        = 524,288 samples
+valid ADC8 samples   = 524,287
+excluded sentinel    = 1
+valid fraction       = 0.9999980926513672
+```
+
+CH1 timing over the complete record:
+
+```text
+rising edges         = 105
+falling edges        = 104
+mean period          = 4999.004830917875 samples
+period stddev        = 1.5180001608430254 samples
+period CV            = 0.00030366047087101994
+edge agreement       = true
+```
+
+Using the nominal 1 kHz internal CAL source:
+
+```text
+estimated sample rate     = 4,999,004.8309 samples/s
+estimated sample interval = 200.039815 ns
+estimated record duration = 104.878274 ms
+```
+
+Conclusion:
+
+```text
+timeBaseCode 15 = 400 us/div
+decoded sample stream ~= 5 MS/s
+decoded record depth  = 524,288 samples/channel
+decoded record span   ~= 104.88 ms/channel
+```
+
+Codes 15, 16, 17 and 18 are therefore all verified to use the same approximately 5 MS/s, 512 KiSample/channel decoded acquisition stream. In this range, Time/div changes are downstream viewport/rendering behavior rather than changes in decoded sample clock or decoded record depth.
