@@ -16,6 +16,7 @@
             <DockPanel>
                 <StackPanel Orientation="Horizontal">
                     <Button Content="Simulator verbinden" Margin="4" Padding="12,7" Click="ConnectSimulator_Click"/>
+                    <Button Content="DSO-1102 verbinden" Margin="4" Padding="12,7" Click="ConnectHardware_Click"/>
                     <Button x:Name="RunButton" Content="Run" Margin="4" Padding="12,7" Click="Run_Click" IsEnabled="False"/>
                     <Button x:Name="SingleButton" Content="Single" Margin="4" Padding="12,7" Click="Single_Click" IsEnabled="False"/>
                     <Button x:Name="StopButton" Content="Stop" Margin="4" Padding="12,7" Click="Stop_Click" IsEnabled="False"/>
@@ -53,7 +54,7 @@
                         <TextBlock Text="DSO1102 USB DRIVER 2" Foreground="#E7EAF0" Margin="0,8,0,0"/>
                         <TextBlock Text="USB\VID_04B5&amp;PID_1102" Foreground="#AEB5C0"/>
                         <TextBlock Text="ODM" Foreground="#AEB5C0"/>
-                        <TextBlock Text="Real-Backend wartet auf Treiber/API-Verifikation."
+                        <TextBlock Text="Real-Backend: verifizierter 1-ms/div-Rohframepfad via x86 Vendor-DLL-Bridge."
                                    Foreground="#AEB5C0" TextWrapping="Wrap" Margin="0,8,0,0"/>
                     </StackPanel>
                 </Border>
