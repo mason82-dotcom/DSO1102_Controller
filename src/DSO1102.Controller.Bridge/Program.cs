@@ -605,6 +605,8 @@ internal static class Program
         // actually populated each output buffer.
         var writeExtentA = SummarizeBufferWriteExtent(bufferA, verifiedSampleCount);
         var writeExtentB = SummarizeBufferWriteExtent(bufferB, verifiedSampleCount);
+        var fullBufferA = SummarizeFullBuffer(bufferA);
+        var fullBufferB = SummarizeFullBuffer(bufferB);
         var allZeroA = a.All(x => x == 0);
         var allZeroB = b.All(x => x == 0);
 
@@ -665,7 +667,9 @@ internal static class Program
                 analysisWindowSource = "0x2800 branch previously verified in the original application.",
                 guardBufferSamplesPerChannel = guardBufferSamples,
                 bufferWriteExtentA = writeExtentA,
-                bufferWriteExtentB = writeExtentB
+                bufferWriteExtentB = writeExtentB,
+                fullBufferA,
+                fullBufferB
             },
             bufferA = SummarizeSamples(a),
             bufferB = SummarizeSamples(b),
@@ -694,6 +698,36 @@ internal static class Program
         });
 
         return waveformReadValid ? 0 : 2;
+    }
+
+    private static object SummarizeFullBuffer(ushort[] buffer)
+    {
+        var adc = buffer.Where(x => x <= 0x00FF).ToArray();
+        var excluded = buffer.Length - adc.Length;
+        var adcFraction = adc.Length / (double)buffer.Length;
+
+        object? timing = null;
+        object? plateaus = null;
+
+        if (adc.Length >= 16)
+        {
+            plateaus = AnalyzeTwoPlateaus(adc);
+            timing = AnalyzeSquareWaveTiming(adc);
+        }
+
+        var tailStart = Math.Max(0, buffer.Length - 64);
+
+        return new
+        {
+            count = buffer.Length,
+            adc8ValidCount = adc.Length,
+            excludedCount = excluded,
+            adc8Fraction = adcFraction,
+            first16 = buffer.Take(16).ToArray(),
+            last64 = buffer.Skip(tailStart).Take(64).ToArray(),
+            twoPlateauAnalysis = plateaus,
+            squareWaveTiming = timing
+        };
     }
 
     private static object SummarizeBufferWriteExtent(ushort[] buffer, int chunkSize)
