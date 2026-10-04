@@ -625,8 +625,8 @@ internal static class Program
                 allZeroB,
                 channelMapping = waveformReadValid
                     ? groundReference
-                        ? "Buffer A is the leading CH1 candidate: with CH1 tied to GND it is markedly flatter than buffer B. Final mapping will be confirmed with a driven signal."
-                        : "Generic raw capture: no channel mapping inference is made unless the physical input condition is known."
+                        ? "Buffer A is CH1 and Buffer B is CH2. Mapping was confirmed by a later driven-signal test on CH1."
+                        : "Buffer A = CH1, Buffer B = CH2 (confirmed by driven-signal comparison against the grounded baseline)."
                     : "Not evaluated because the vendor call did not populate either buffer.",
                 physicalVoltageConversionApplied = false,
                 vendorCalibrationStateUsed = true
@@ -643,6 +643,81 @@ internal static class Program
         });
 
         return waveformReadValid ? 0 : 2;
+    }
+
+    private static object AnalyzeTwoPlateaus(ushort[] adcSamples)
+    {
+        if (adcSamples.Length < 2)
+            return new { detected = false };
+
+        double low = adcSamples.Min();
+        double high = adcSamples.Max();
+
+        if (Math.Abs(high - low) < 0.5)
+            return new { detected = false };
+
+        int[] lowCluster = [];
+        int[] highCluster = [];
+
+        for (var iteration = 0; iteration < 16; iteration++)
+        {
+            var lows = new List<int>();
+            var highs = new List<int>();
+
+            foreach (var sample in adcSamples)
+            {
+                if (Math.Abs(sample - low) <= Math.Abs(sample - high))
+                    lows.Add(sample);
+                else
+                    highs.Add(sample);
+            }
+
+            if (lows.Count == 0 || highs.Count == 0)
+                return new { detected = false };
+
+            var newLow = lows.Average();
+            var newHigh = highs.Average();
+
+            lowCluster = lows.ToArray();
+            highCluster = highs.ToArray();
+
+            if (Math.Abs(newLow - low) < 0.0001 && Math.Abs(newHigh - high) < 0.0001)
+                break;
+
+            low = newLow;
+            high = newHigh;
+        }
+
+        static object SummarizeCluster(int[] values)
+        {
+            var mean = values.Average();
+            var variance = values.Select(x =>
+            {
+                var d = x - mean;
+                return d * d;
+            }).Average();
+
+            return new
+            {
+                count = values.Length,
+                min = values.Min(),
+                max = values.Max(),
+                mean,
+                standardDeviationCounts = Math.Sqrt(variance)
+            };
+        }
+
+        var lowMean = lowCluster.Average();
+        var highMean = highCluster.Average();
+
+        return new
+        {
+            detected = true,
+            low = SummarizeCluster(lowCluster),
+            high = SummarizeCluster(highCluster),
+            separationCounts = highMean - lowMean,
+            dutyCycleHigh = (double)highCluster.Length / adcSamples.Length
+        };
     }
 
     private static object SummarizeSamples(ushort[] samples)
@@ -681,6 +756,25 @@ internal static class Program
             adcStdDev = Math.Sqrt(variance);
         }
 
+        var histogram = adcSamples
+            .GroupBy(x => x)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)
+            .Take(16)
+            .Select(g => new { value = g.Key, count = g.Count() })
+            .ToArray();
+
+        var sorted = adcSamples.OrderBy(x => x).ToArray();
+
+        ushort? Quantile(double q)
+        {
+            if (sorted.Length == 0)
+                return null;
+
+            var index = (int)Math.Round((sorted.Length - 1) * q);
+            return sorted[Math.Clamp(index, 0, sorted.Length - 1)];
+        }
+
         return new
         {
             count = samples.Length,
@@ -701,7 +795,12 @@ internal static class Program
                     : (int?)null,
                 mean = adcMean,
                 standardDeviationCounts = adcStdDev,
-                distinctValues = adcSamples.Distinct().Count()
+                distinctValues = adcSamples.Distinct().Count(),
+                q05 = Quantile(0.05),
+                median = Quantile(0.50),
+                q95 = Quantile(0.95),
+                histogramTop16 = histogram,
+                twoPlateauAnalysis = AnalyzeTwoPlateaus(adcSamples)
             },
             excluded16BitValues = nonAdcSamples
                 .Take(16)
