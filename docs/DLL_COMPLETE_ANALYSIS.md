@@ -670,3 +670,90 @@ x86 bridge
 ```
 
 Do not replace the original driver, do not emit guessed IOCTL/USB packets, and do not copy GPL implementation code from OpenHantek. Use this DLL analysis plus runtime traces as the primary implementation specification.
+
+
+## Vendor-application post-processing after dsoGetChannelData
+
+The DLL itself returns decoded channel samples as 8-bit-domain values expanded to UInt16. The original vendor EXE performs an additional software correction after calling `dsoGetChannelData`.
+
+This correction is **outside** `DSO1102USB.dll` and therefore is not part of the DLL ABI.
+
+### Per-channel correction factor
+
+The original application owns two double-precision scale factors:
+
+```text
+CH1 factor -> object +0x160
+CH2 factor -> object +0x168
+```
+
+The object constructor initializes both factors to exactly:
+
+```text
+1.0
+```
+
+A later calibration/update path can rebuild them from two 16-bit application-side values:
+
+```text
+factor = coefficientWord * 0.0001
+```
+
+The constant `0.0001` is embedded in the vendor EXE as a double.
+
+### Sample correction formula
+
+For each channel, the application corrects samples around that channel's reference/zero level rather than around literal ADC zero.
+
+Let:
+
+```text
+raw       = decoded sample from dsoGetChannelData
+reference = 255 - channelReferenceWord
+factor    = CH1/CH2 software factor
+```
+
+The vendor application computes the equivalent of:
+
+```text
+corrected = reference + (raw - reference) * factor
+```
+
+then rounds to an integer and clamps the result into:
+
+```text
+0 .. 255
+```
+
+With the constructor default `factor = 1.0`, this stage leaves the waveform unchanged.
+
+### Independent DLL-side 16/15 correction
+
+Inside `dsoGetChannelData` itself, certain FPGA/mode-dependent branches also apply a separate integer-domain correction around a reference value. The multiply/shift sequence is exactly equivalent to scaling the displacement by:
+
+```text
+16 / 15
+```
+
+This is separate from the EXE's optional per-channel factor above.
+
+### Project consequence
+
+Bridge captures currently expose the output of `dsoGetChannelData`, not the later vendor-EXE post-correction.
+
+Therefore:
+
+```text
+bridge waveform samples
+    = verified decoded ADC-domain data
+
+not yet guaranteed to equal
+    = vendor application's final display-domain corrected counts
+
+and not yet
+    = calibrated physical volts
+```
+
+The replacement controller should keep these three domains explicit until the remaining ADC-count-to-voltage mapping and any device-specific software correction coefficient are runtime-validated.
+
+The OpenHantek DSO-2250 family model strongly supports the nominal eight-vertical-division conversion, but the DSO-1102 controller must not silently label unverified raw counts as calibrated volts.
