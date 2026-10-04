@@ -1683,3 +1683,36 @@ A historical bugfix in `Control::setOffset` specifically corrected the high byte
 This is strong family-level evidence for interpreting the DSO-1102 channel-level block as two endpoint values per channel/per V-div range.
 
 For the DSO-1102, the exact six-argument `dsoSetOffset` wrapper ABI is still to be recovered by runtime trace before the bridge invokes it.
+
+
+## Static dsoSetOffset call-site reconstruction
+
+Disassembly of the original vendor application identifies the wrapper at `0x4537B0`, which calls the function pointer at object offset `+0x230` using six stack arguments.
+
+The DLL call is assembled as:
+
+```text
+arg1 = device index (low16 from object +0x28)
+arg2 = pointer to object +0x36
+arg3 = wrapper argument B
+arg4 = wrapper argument C
+arg5 = wrapper argument D
+arg6 = pointer to object +0xD4
+```
+
+Immediately before the call, the wrapper copies 44 UInt16 calibration/configuration words into the object block beginning at `+0xD4`, and conditionally adjusts the first 18 pairs based on another wrapper input.
+
+This strongly suggests that `arg6` is the packed channel/range calibration table used by the offset calculation.
+
+Multiple callers feed `arg3` and `arg4` from two parallel UI/state getters and `arg5` from a 16-bit control value. Combined with the historical Hantek offset model, the leading semantic hypothesis is:
+
+```text
+arg1 = device index
+arg2 = offset/range state pointer
+arg3 = CH1 vertical-position value
+arg4 = CH2 vertical-position value
+arg5 = trigger-level/trigger-position value
+arg6 = packed per-range calibration table
+```
+
+This mapping is not yet promoted to a verified ABI. The controlled `dsoSetOffset` runtime trace should test it by moving only CH1 vertically while leaving CH2, trigger level, V/div and coupling unchanged.
