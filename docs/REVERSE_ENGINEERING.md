@@ -2314,3 +2314,65 @@ ADC core clock
 The existing 400 us/div through 4 ms/div measurements remain valid as measurements of the effective transferred stream. What changes is the interpretation: the ~5 MS/s value is stronger than a mere display-grid artifact, but it is still not proof that the ADC silicon itself runs at 5 MHz.
 
 The bridge now reports both the CAL-referenced effective stream rate and the separate low-level hardware timing words.
+
+
+## Trigger-state object: statically resolved UI semantics
+
+The original application's trigger-state object at main-object offset `+0x33E6E8` has four bounded 16-bit fields. Direct setter/getter analysis plus the application's embedded menu resources resolves them as:
+
+```text
+object +0x04 : Trigger Source, values 0..4
+object +0x06 : Trigger Slope,  values 0..1
+object +0x08 : Trigger Sweep,  values 0..2
+object +0x0A : Trigger Mode,   values 0..1
+```
+
+The embedded resource table gives the exact UI enumerations:
+
+```text
+Trigger Source:
+  0 = CH1
+  1 = CH2
+  2 = ALT
+  3 = EXT
+  4 = EXT/10
+
+Trigger Slope:
+  0 = +
+  1 = -
+
+Trigger Sweep:
+  0 = Auto
+  1 = Normal
+  2 = Single
+
+Trigger Mode:
+  0 = Edge
+  1 = Pulse
+```
+
+The source getter is the thunk at `0x40245F -> 0x4661E0`, which returns `object+0x04`. The application copies this value into `ce0daa` and feeds that state into several hardware wrappers.
+
+This proves that:
+
+```text
+dsoSetOffset arg5 = Trigger Source selector
+dsoSetVoltageAndCoupling arg6 = Trigger Source selector
+dsoSetTriggerAndSampleRateNew config.word[0] = Trigger Source selector
+```
+
+Additional direct DLL behavior:
+
+```text
+dsoSetVoltageAndCoupling:
+  source == 3 -> select the external-trigger relay
+
+dsoSetOffset trigger calibration:
+  source == 0 -> CH1 trigger calibration pair (words 36,37)
+  source == 1 -> CH2 trigger calibration pair (words 38,39)
+  source >= 2 -> shared ALT/EXT/EXT10 calibration pair (words 42,43)
+```
+
+The fact that source value 2 is ALT is also independently visible in application logic that explicitly checks the source getter against `2` and maintains a separate ALT-state flag.
+
+This removes the last unknown semantic label from the six-argument `dsoSetOffset` ABI.
