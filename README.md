@@ -82,9 +82,9 @@ Current scope:
 - sentinel values are sanitized before signal analysis;
 - raw frames are decimated to the requested application frame length;
 - amplitude is explicitly labelled `ADC`, not volts;
-- Single Capture only in the GUI for now.
+- Single and Run acquisition through one persistent x86 bridge process.
 
-The first real backend deliberately does **not** claim to set or know the current
+The first real backend keeps one x86 bridge server alive for the whole device session, so repeated captures do not relaunch the helper process. It deliberately does **not** claim to set or know the current
 analog V/div/coupling state. The normal `frame-1ms-adc` command self-initializes
 the verified timebase path while preserving the existing analog front-end state.
 
