@@ -2257,3 +2257,60 @@ helper arg8 = New-setter arg8
 For the guarded self-init captures used so far, New-setter args 2 and 4..7 are zero and arg8 is 2. Consequently the only varying low control bits in those tests come from `config.word[0]`; the other UI meanings still require a controlled trigger trace.
 
 This exact layout replaces any earlier generic-family assumption about the DSO-1102 trigger byte.
+
+
+## `dsoGetChannelData` deep-record transfer path
+
+Direct disassembly of the real `DSO1102USB.dll` resolves how the characterized deep-memory records are produced.
+
+For the Time/DIV >= 10 path used by the verified 400 us/div, 1 ms/div, 2 ms/div and 4 ms/div profiles, the DLL does **not** synthesize extra time samples by interpolation.
+
+The relevant record-depth selector is `config.word[10]`:
+
+```text
+word[10] == 0 -> decoded record limit 0x2800  = 10,240 samples/channel
+word[10] != 0 -> decoded record limit 0x80000 = 524,288 samples/channel
+```
+
+In the deep path the DLL allocates:
+
+```text
+raw transfer buffer = 0x200000 bytes
+channel temp A      = 0x100000 bytes
+channel temp B      = 0x100000 bytes
+```
+
+and reads a total of `0x100000` raw acquisition bytes for the normal two-channel path.
+
+The inner transfer loop consumes two raw bytes at a time and writes them directly as UInt16-expanded byte samples into the two channel output streams. Each input byte becomes one output sample; the later code rotates/reorders the arrays around the trigger point but preserves sample count.
+
+For the normal deep two-channel mode:
+
+```text
+1,048,576 raw interleaved bytes
+-> 524,288 CH1 byte samples
+-> 524,288 CH2 byte samples
+```
+
+This means the ~5,000 samples measured per approximately-1-kHz CAL period are not created by a DLL time-axis interpolation stage. They describe the effective sample spacing of the transferred/deinterleaved acquisition stream.
+
+However, this still must not be called the physical ADC **core clock**. The oscilloscope may sample internally at a higher clock and decimate in hardware/FPGA before the USB transfer.
+
+Therefore use these terms separately:
+
+```text
+CAL-referenced effective acquisition rate
+    = inferred from sample spacing in dsoGetChannelData's transferred stream
+
+hardware timing/downsampler programming
+    = the raw fields emitted by _dsoSetSampleRate@8
+
+ADC core clock
+    = not yet directly measured
+```
+
+### Consequence for earlier 5 MS/s observations
+
+The existing 400 us/div through 4 ms/div measurements remain valid as measurements of the effective transferred stream. What changes is the interpretation: the ~5 MS/s value is stronger than a mere display-grid artifact, but it is still not proof that the ADC silicon itself runs at 5 MHz.
+
+The bridge now reports both the CAL-referenced effective stream rate and the separate low-level hardware timing words.
