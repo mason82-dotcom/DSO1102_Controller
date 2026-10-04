@@ -400,16 +400,14 @@ internal static class Program
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct EXCEPTION_RECORD32
+    private unsafe struct EXCEPTION_RECORD32
     {
         public uint ExceptionCode;
         public uint ExceptionFlags;
         public IntPtr ExceptionRecord;
         public IntPtr ExceptionAddress;
         public uint NumberParameters;
-
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 15)]
-        public uint[] ExceptionInformation;
+        public fixed uint ExceptionInformation[15];
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
