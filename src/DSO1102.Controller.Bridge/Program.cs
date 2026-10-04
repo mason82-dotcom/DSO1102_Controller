@@ -152,8 +152,12 @@ internal static class Program
             levelsHandle.Free();
         }
 
+        var packedCalibrationWords = Enumerable.Range(0, channelLevels.Length / 2)
+            .Select(i => (ushort)((channelLevels[i * 2] << 8) | channelLevels[i * 2 + 1]))
+            .ToArray();
+
         var captureValue = 0u;
-        var captureStatus = getCaptureState(deviceIndex, out captureValue);
+        var captureStateCode = getCaptureState(deviceIndex, out captureValue);
 
         WriteJson(new
         {
@@ -178,13 +182,16 @@ internal static class Program
                 channelLevels = new
                 {
                     callSucceeded = channelLevelStatus != 0,
-                    count = channelLevels.Length,
-                    raw = channelLevels
+                    rawByteCount = channelLevels.Length,
+                    rawBytesExpandedToWords = channelLevels,
+                    packedWordCount = packedCalibrationWords.Length,
+                    packedWords = packedCalibrationWords
                 },
                 captureState = new
                 {
-                    status = captureStatus,
-                    rawValue = captureValue
+                    stateCode = captureStateCode,
+                    stateName = CaptureStateName(captureStateCode),
+                    rawTriggerValue = captureValue
                 }
             },
             safety = new
@@ -247,6 +254,17 @@ internal static class Program
 
         return 0;
     }
+
+    private static string CaptureStateName(ushort stateCode) =>
+        stateCode switch
+        {
+            0 => "VALUE0",
+            1 => "VALUE1",
+            2 => "SUCCESS",
+            7 => "VALUE7",
+            127 => "TIMEOUT",
+            _ => $"UNKNOWN_{stateCode}"
+        };
 
     private static void WriteJson(object value) =>
         Console.WriteLine(JsonSerializer.Serialize(value, new JsonSerializerOptions
