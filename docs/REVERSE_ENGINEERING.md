@@ -2376,3 +2376,53 @@ dsoSetOffset trigger calibration:
 The fact that source value 2 is ALT is also independently visible in application logic that explicitly checks the source getter against `2` and maintains a separate ALT-state flag.
 
 This removes the last unknown semantic label from the six-argument `dsoSetOffset` ABI.
+
+
+## `dsoSetFiltAndVoltageData` exact combined-control layout
+
+Direct disassembly of `DSO1102USB.dll` export `dsoSetFiltAndVoltageData` (RVA `0x6280`) plus its original-application wrapper at `0x454590` resolves all five arguments:
+
+```text
+arg1 = device index
+arg2 = CH1 bandwidth/filter flag
+arg3 = CH2 bandwidth/filter flag
+arg4 = CH1 V/div range code
+arg5 = CH2 V/div range code
+```
+
+The original application supplies these values from the two channel objects:
+
+```text
+channel +0x0C -> bandwidth/filter flag
+channel +0x18 -> V/div range code
+```
+
+The DLL converts each range code into the same repeating 1/2/5 gain subcode already seen in the gain path:
+
+```text
+range 0,3,6 -> gain 0
+range 1,4,7 -> gain 1
+range 2,5,8 -> gain 2
+```
+
+It then packs one control byte as:
+
+```text
+bits 0..1 = CH1 gain subcode
+bits 2..3 = CH2 gain subcode
+bit 4     = CH2 filter
+bit 5     = CH1 filter
+bits 6..7 = 0
+```
+
+The packed byte is sent through a dedicated control transfer with request value `0xE5`. The replacement controller should continue to invoke the vendor DLL wrapper rather than reproduce that transfer directly.
+
+This combined wrapper explains why the manufacturer application reapplies gain-dependent filter/voltage state before calling the separate relay/coupling wrapper.
+
+A read-only runtime trace is exposed as:
+
+```powershell
+.\tools\Trace-AnalogConfig.ps1 -Mode filtervoltage
+```
+
+The runtime tracer now also decodes the combined control byte for each observed call.
