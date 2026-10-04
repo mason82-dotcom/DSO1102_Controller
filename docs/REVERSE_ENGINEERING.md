@@ -495,12 +495,13 @@ dsoSetTriggerAndSampleRate      (3 arguments)
 
 Recommended reconstruction procedure:
 
-1. Start the vendor application through the tracer.
-2. Select one known time-base value in the vendor UI.
-3. Trigger one configuration/apply action if needed.
-4. Record the captured setter arguments and pointed-to structure bytes.
-5. Repeat for adjacent time bases.
-6. Correlate the changing structure field with the measured sample period from `capture-raw`.
+1. Start the vendor application through the multi-call tracer.
+2. Switch the vendor UI through the real adjacent DSO-1102 time bases: 400 us/div -> 1 ms/div -> 2 ms/div -> 4 ms/div.
+3. Let each change trigger its normal configuration call.
+4. Record the captured setter arguments and pointed-to UInt16 structure words for each call.
+5. Correlate the changing structure field with the measured sample period from `capture-raw`.
+
+Do not use 500 us/div or 5 ms/div for this model; the observed UI provides 400 us/div and 4 ms/div instead.
 
 For the already characterized profile:
 
