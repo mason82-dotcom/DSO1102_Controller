@@ -34,6 +34,17 @@ internal static class Program
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int DsoForceTriggerDelegate(int deviceIndex);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate ushort DsoGetChannelDataDelegate(
+        int deviceIndex,
+        IntPtr bufferA,
+        IntPtr bufferB,
+        IntPtr captureConfig,
+        IntPtr channelConfig,
+        uint triggerValue,
+        int correctionA,
+        int correctionB);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryExW(string lpFileName, IntPtr hFile, uint dwFlags);
 
@@ -57,8 +68,9 @@ internal static class Program
                 "info" => ReadDeviceInfo(dllPath),
                 "arm" => ArmAndObserve(dllPath, forceTrigger: false),
                 "force" => ArmAndObserve(dllPath, forceTrigger: true),
+                "capture-gnd" => CaptureGroundBaseline(dllPath),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-gnd, exports.")
             };
         }
         catch (Exception ex)
@@ -256,7 +268,7 @@ internal static class Program
                 rawTriggerValue = triggerValue
             });
 
-            if (stateCode == 2 || stateCode == 127)
+            if (stateCode == 3 || stateCode == 127)
                 break;
         }
 
@@ -286,6 +298,163 @@ internal static class Program
         });
 
         return 0;
+    }
+
+    private static int CaptureGroundBaseline(string dllPath)
+    {
+        using var library = VendorLibrary.Load(dllPath);
+
+        var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
+        var captureStart = library.GetDelegate<DsoCaptureStartDelegate>("dsoCaptureStart");
+        var triggerEnabled = library.GetDelegate<DsoTriggerEnabledDelegate>("dsoTriggerEnabled");
+        var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
+        var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
+        var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
+
+        var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
+        if (deviceIndex < 0)
+            return Fail("No DSO-1102 device was found at indices 0..3.");
+
+        captureStart(deviceIndex);
+        Thread.Sleep(3);
+        triggerEnabled(deviceIndex);
+        Thread.Sleep(3);
+        force(deviceIndex);
+        Thread.Sleep(3);
+
+        var stateCode = (ushort)0;
+        var triggerValue = 0u;
+
+        for (var i = 0; i < 100; i++)
+        {
+            stateCode = getCaptureState(deviceIndex, out triggerValue);
+            if (stateCode == 3)
+                break;
+
+            if (stateCode == 127)
+                return Fail("Capture timed out before a readable state was reached.");
+
+            Thread.Sleep(3);
+        }
+
+        if (stateCode != 3)
+            return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
+
+        const int smallBufferSamples = 10_240;
+        const int guardBufferSamples = 524_288;
+
+        // The vendor DLL uses two six-word configuration blocks while decoding data.
+        // These conservative values match the already initialized CH1 / 1 ms/div /
+        // small-memory test setup closely enough for a first GND-baseline read.
+        // No configuration setter is called here.
+        var captureConfig = new ushort[]
+        {
+            1,  // trigger source: CH1 family value
+            0,  // selected channel: CH1
+            6,  // 1 ms/div family time-base index
+            50, // nominal 50% trigger position
+            0,  // small RAM
+            0
+        };
+
+        var channelConfig = new ushort[6];
+        var bufferA = new ushort[guardBufferSamples];
+        var bufferB = new ushort[guardBufferSamples];
+
+        var handles = new[]
+        {
+            GCHandle.Alloc(bufferA, GCHandleType.Pinned),
+            GCHandle.Alloc(bufferB, GCHandleType.Pinned),
+            GCHandle.Alloc(captureConfig, GCHandleType.Pinned),
+            GCHandle.Alloc(channelConfig, GCHandleType.Pinned)
+        };
+
+        ushort readResult;
+
+        try
+        {
+            readResult = getChannelData(
+                deviceIndex,
+                handles[0].AddrOfPinnedObject(),
+                handles[1].AddrOfPinnedObject(),
+                handles[2].AddrOfPinnedObject(),
+                handles[3].AddrOfPinnedObject(),
+                triggerValue,
+                0,
+                0);
+        }
+        finally
+        {
+            foreach (var handle in handles)
+                if (handle.IsAllocated)
+                    handle.Free();
+        }
+
+        var a = bufferA.Take(smallBufferSamples).ToArray();
+        var b = bufferB.Take(smallBufferSamples).ToArray();
+
+        WriteJson(new
+        {
+            ok = true,
+            command = "capture-gnd",
+            deviceIndex,
+            capture = new
+            {
+                stateCode,
+                stateName = CaptureStateName(stateCode),
+                triggerValue,
+                vendorReadResult = readResult,
+                assumedSampleCountPerBuffer = smallBufferSamples,
+                configurationSource = "Original software initialized device; bridge performs no Set* call."
+            },
+            bufferA = SummarizeSamples(a),
+            bufferB = SummarizeSamples(b),
+            interpretation = new
+            {
+                channelMapping = "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically.",
+                voltageCalibrationApplied = false
+            },
+            safety = new
+            {
+                persistentConfigurationChanged = false,
+                calibrationWritten = false,
+                flashWritten = false,
+                deviceIdWritten = false,
+                configurationSettersCalled = false,
+                waveformRead = true
+            }
+        });
+
+        return 0;
+    }
+
+    private static object SummarizeSamples(ushort[] samples)
+    {
+        if (samples.Length == 0)
+            return new { count = 0 };
+
+        var min = samples.Min();
+        var max = samples.Max();
+        var mean = samples.Average(x => (double)x);
+        var variance = samples
+            .Select(x =>
+            {
+                var d = x - mean;
+                return d * d;
+            })
+            .Average();
+
+        return new
+        {
+            count = samples.Length,
+            min,
+            max,
+            peakToPeakCounts = max - min,
+            mean,
+            standardDeviationCounts = Math.Sqrt(variance),
+            distinctValues = samples.Distinct().Count(),
+            first64 = samples.Take(64).ToArray()
+        };
     }
 
     private static int CheckExports(string dllPath)
@@ -344,7 +513,8 @@ internal static class Program
         {
             0 => "VALUE0",
             1 => "VALUE1",
-            2 => "SUCCESS",
+            2 => "VALUE2",
+            3 => "CAPTURE_READY",
             7 => "VALUE7",
             127 => "TIMEOUT",
             _ => $"UNKNOWN_{stateCode}"
