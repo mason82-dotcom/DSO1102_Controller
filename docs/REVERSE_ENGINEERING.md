@@ -540,3 +540,12 @@ The calls came from two original-application return sites:
 Arguments 4..7 were zero and argument 8 was 2 in every captured call. The first eight calls were therefore dominated by initialization/refresh activity and did not expose the intended sequence of UI time-base changes.
 
 This result also means that `word[2]` must not yet be labeled as the time-base code solely from the New-setter trace. The next step is to trace the three-argument legacy export `dsoSetTriggerAndSampleRate`, where static DLL analysis already showed direct construction of the sample-rate/trigger command.
+
+
+## Legacy setter runtime result
+
+A runtime trace of `dsoSetTriggerAndSampleRate` during normal vendor-application startup, capture activity, and time-base UI changes captured zero calls. The legacy export exists in the DLL but is not used by this application path.
+
+Time-base reconstruction therefore remains focused on `dsoSetTriggerAndSampleRateNew`.
+
+The call tracer now supports duplicate suppression based on a selected pointer argument. For time-base work, argument 3 is used as the state key: the first configuration is recorded, subsequent byte-identical argument-3 states are suppressed, and only actual configuration changes are retained. This prevents recurring acquisition/refresh calls from consuming the trace budget before UI changes occur.
