@@ -219,3 +219,31 @@ The bridge now treats an unchanged/all-zero pair of buffers as an invalid wavefo
 An older manufacturer LabVIEW example for the related DSO-2090 family used two preallocated output arrays containing 30,000 elements each for `dsoGetChannelData`. This is useful ABI evidence but does not prove the DSO-1102 sample count. Accordingly, the previous 10,240-sample assumption is no longer treated as verified for the DSO-1102 DLL.
 
 Further hardware reads are gated on reconstructing the remaining auxiliary arguments of the eight-argument DSO-1102 `dsoGetChannelData` export.
+
+
+## Runtime trace of dsoGetChannelData
+
+A one-shot debugger trace of the original vendor application captured the real call at export RVA `0x3820` with return address `0x00453AC8`.
+
+Observed entry arguments:
+
+```text
+arg1 = 0x00030000
+arg2 = 0x06C89020
+arg3 = 0x06E91020
+arg4 = 0x0449ADCA
+arg5 = 0x0449ADD6
+arg6 = 0x00001860 (6240)
+arg7 = 0x00030001
+arg8 = 0x0449000C
+```
+
+Important observations:
+
+- arg2 and arg3 point to large zero-initialized memory regions at function entry and are strong candidates for the two waveform output buffers.
+- arg4 and arg5 are pointers separated by exactly 12 bytes and their memory previews overlap, proving that they point into the same configuration/calibration object.
+- arg6 is a scalar value of 6240 and is consistent with a trigger/capture-position field.
+- arg1 and arg7 are packed scalar-looking values (`0x00030000`, `0x00030001`), not device indices.
+- arg8 is another pointer and remained zero-filled at entry.
+
+The previously guessed bridge signature is therefore not valid. Direct waveform reads are disabled until a return-side trace confirms which pointer arguments are modified by the vendor DLL and what EAX returns.
