@@ -1214,65 +1214,6 @@ Therefore, CH2 enabled/disabled state must not be inferred from `dsoSetVoltageAn
 
 
 
-## Channel enable remains a separate control path
-
-Operator clarification for the CH2 analog trace: the first observed `dsoSetVoltageAndCoupling` call was triggered by enabling CH2.
-
-That call carried the same range/coupling-shaped scalar fields used by ordinary analog updates. Therefore the voltage/coupling export is re-applied when a channel is enabled, but no independent enable bit has yet been identified in its six scalar arguments.
-
-A read-only runtime trace mode is available for the candidate internal export:
-
-```text
-_dsoSetChIn@8
-```
-
-Use:
-
-```powershell
-powershell -ExecutionPolicy Bypass \
-  -File .\tools\Trace-AnalogConfig.ps1 \
-  -Mode channel \
-  -MaxCalls 16 \
-  -IdleTimeoutMs 30000 \
-  -TotalTimeoutMs 120000
-```
-
-Recommended sequence:
-
-```text
-start: CH1 enabled, CH2 disabled
-enable CH2
-disable CH2
-enable CH2
-disable CH1
-enable CH1
-```
-
-Keep V/div, coupling, timebase, trigger and probe settings unchanged. The candidate export is traced only; it is not invoked by the bridge until its semantics are proven.
-
-
-## _dsoSetChIn@8 is an internal helper, not yet a channel-enable ABI
-
-A runtime trace of `_dsoSetChIn@8` captured 16 completed calls, but every call returned to `0x100053FD`.
-
-The vendor DLL base is `0x10000000`, so the return site is RVA `0x53FD`. This lies inside the already identified `dsoSetTriggerAndSampleRateNew` routine at RVA `0x53B0`.
-
-Observed low-16 argument pairs were:
-
-```text
-call 1:  arg1=0, arg2=0
-calls 2..16: arg1=0, arg2=2
-```
-
-Therefore `_dsoSetChIn@8` is being called internally by the New trigger/sample-rate setter and cannot currently be treated as the application's CH1/CH2 UI enable/disable setter.
-
-The 16-call trace budget was consumed by repeated internal calls before the requested UI toggle sequence could provide distinct evidence.
-
-Do not expose `_dsoSetChIn@8` as a bridge control until its second argument semantics are independently proven.
-
-The actual channel enable/disable state remains unresolved and must be located at the original application's state/call-site level rather than inferred from this internal helper.
-
-
 ## External corroboration from NI / LabVIEW community
 
 The following NI Community findings are not treated as protocol truth for the DSO-1102 by themselves, but they materially corroborate the reverse-engineered architecture and Hantek-family behavior observed in this project.
@@ -2274,3 +2215,45 @@ Thus `config.word[0]` is directly involved in trigger-input selection.
 In the already traced normal acquisition calls the New-setter auxiliary scalar args were mostly zero and `arg8=2`, which is not sufficient to assign every packed bit a UI semantic. The dedicated trigger trace remains required to map CH1/CH2/EXT and rising/falling behavior on this exact DSO-1102.
 
 The current trace mode uses whole-call Low16 signature deduplication so internal refresh calls with unchanged control state are suppressed.
+
+
+## `_dsoSetTrigIn@32` packed control-byte layout
+
+Direct instruction-level analysis resolves the exact bit layout of command byte 2 built by `_dsoSetTrigIn@32`:
+
+```text
+bits 0..1 = translated source selector
+bit 2     = helper arg4 bit0
+bit 3     = helper arg3 bit0
+bit 4     = helper arg6 bit0
+bits 5..6 = helper arg7 bits0..1
+bit 7     = helper arg5 bit0
+```
+
+The source translation performed on helper arg2 is:
+
+```text
+arg2 0 -> source bits 1
+arg2 1 -> source bits 0
+arg2 2 -> source bits 2
+arg2 3 -> source bits 2
+arg2 4 -> source bits 2
+arg2 >4 -> source bits = helper arg5 & 0x03
+```
+
+`dsoSetTriggerAndSampleRateNew` supplies the helper as:
+
+```text
+helper arg1 = New-setter arg1 (device)
+helper arg2 = config.word[0]
+helper arg3 = New-setter arg4
+helper arg4 = New-setter arg2
+helper arg5 = New-setter arg5
+helper arg6 = New-setter arg6
+helper arg7 = New-setter arg7
+helper arg8 = New-setter arg8
+```
+
+For the guarded self-init captures used so far, New-setter args 2 and 4..7 are zero and arg8 is 2. Consequently the only varying low control bits in those tests come from `config.word[0]`; the other UI meanings still require a controlled trigger trace.
+
+This exact layout replaces any earlier generic-family assumption about the DSO-1102 trigger byte.
