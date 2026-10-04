@@ -852,3 +852,47 @@ decoded record span   ~= 104.89 ms/channel
 ```
 
 Therefore, changing from 1 ms/div (code 16) to 2 ms/div (code 17) does not change the decoded sample clock or deep-memory record length. The time-base change is implemented at a later display/viewport stage in the vendor application for these two settings.
+
+
+## 4 ms/div full-buffer verification
+
+A full-buffer `capture-4ms` run verifies that time-base code 18 also uses the same decoded ~5 MS/s deep-memory stream.
+
+Per channel:
+
+```text
+buffer length        = 524,288 samples
+valid ADC8 samples   = 524,287
+excluded sentinel    = 1
+valid fraction       = 0.9999980926513672
+```
+
+CH1 remains a stable square wave across the whole record:
+
+```text
+rising edges         = 105
+falling edges        = 104
+mean period          = 4999.31884057971 samples
+period stddev        = 1.1650226962586319 samples
+period CV            = 0.00023303628622405257
+edge agreement       = true
+```
+
+Using the nominal 1 kHz internal CAL source:
+
+```text
+estimated sample rate     = 4,999,318.8406 samples/s
+estimated sample interval = 200.027250 ns
+estimated record duration = 104.871687 ms
+```
+
+Conclusion:
+
+```text
+timeBaseCode 18 = 4 ms/div
+decoded sample stream ~= 5 MS/s
+decoded record depth  = 524,288 samples/channel
+decoded record span   ~= 104.87 ms/channel
+```
+
+Together with the verified 1 ms/div and 2 ms/div profiles, codes 16, 17 and 18 all use the same ~5 MS/s 512 KiSample deep-memory acquisition. The UI time-base difference for these settings is therefore a display/viewport operation rather than an ADC sample-clock or record-depth change.
