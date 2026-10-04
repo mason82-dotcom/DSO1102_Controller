@@ -35,6 +35,9 @@ internal static class Program
             var argCount = int.TryParse(GetArg(args, "--args"), out var parsed) ? parsed : 8;
             var maxCalls = int.TryParse(GetArg(args, "--max-calls"), out var parsedMaxCalls) ? parsedMaxCalls : 1;
             var idleTimeoutMs = int.TryParse(GetArg(args, "--idle-timeout-ms"), out var parsedTimeout) ? parsedTimeout : 30_000;
+            var totalTimeoutMs = int.TryParse(GetArg(args, "--total-timeout-ms"), out var parsedTotalTimeout)
+                ? parsedTotalTimeout
+                : Math.Max(idleTimeoutMs, 30_000);
 
             if (!File.Exists(exePath))
                 throw new FileNotFoundException("Vendor application not found.", exePath);
@@ -46,12 +49,14 @@ internal static class Program
                 throw new ArgumentOutOfRangeException(nameof(maxCalls), "Max calls must be 1..128.");
             if (idleTimeoutMs is < 1_000 or > 900_000)
                 throw new ArgumentOutOfRangeException(nameof(idleTimeoutMs), "Idle timeout must be 1000..900000 ms.");
+            if (totalTimeoutMs is < 1_000 or > 1_800_000)
+                throw new ArgumentOutOfRangeException(nameof(totalTimeoutMs), "Total timeout must be 1000..1800000 ms.");
 
             var exportRva = PeExports.GetExportRva(dllPath, exportName);
             if (exportRva == 0)
                 throw new EntryPointNotFoundException($"Export '{exportName}' not found in '{dllPath}'.");
 
-            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs);
+            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs);
             Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             return result.Calls.Count > 0 ? 0 : 2;
         }
@@ -73,7 +78,8 @@ internal static class Program
         uint exportRva,
         int argCount,
         int maxCalls,
-        int idleTimeoutMs)
+        int idleTimeoutMs,
+        int totalTimeoutMs)
     {
         var startup = new STARTUPINFO
         {
@@ -115,8 +121,15 @@ internal static class Program
 
         try
         {
-            while (WaitForDebugEvent(out var debugEvent, checked((uint)idleTimeoutMs)))
+            var sessionClock = System.Diagnostics.Stopwatch.StartNew();
+
+            while (sessionClock.ElapsedMilliseconds < totalTimeoutMs)
             {
+                var remainingMs = totalTimeoutMs - sessionClock.ElapsedMilliseconds;
+                var waitMs = (uint)Math.Max(1, Math.Min(idleTimeoutMs, remainingMs));
+
+                if (!WaitForDebugEvent(out var debugEvent, waitMs))
+                    break;
                 var continueStatus = DbgContinue;
                 var shouldExitLoop = false;
 
@@ -354,6 +367,8 @@ internal static class Program
             LoadedDll = loadedDll,
             RequestedMaxCalls = maxCalls,
             CapturedCallCount = calls.Count,
+            IdleTimeoutMs = idleTimeoutMs,
+            TotalTimeoutMs = totalTimeoutMs,
             Calls = calls,
             Instructions = calls.Count > 0
                 ? $"Captured {calls.Count} completed call(s). Each call includes low-16 scalar values plus pointer previews as bytes and UInt16 words."
@@ -633,6 +648,8 @@ internal static class Program
         public string? LoadedDll { get; init; }
         public int RequestedMaxCalls { get; init; }
         public int CapturedCallCount { get; init; }
+        public int IdleTimeoutMs { get; init; }
+        public int TotalTimeoutMs { get; init; }
         public List<CallTrace> Calls { get; init; } = [];
         public string Instructions { get; init; } = "";
     }
