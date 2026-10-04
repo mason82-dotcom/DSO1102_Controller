@@ -39,3 +39,20 @@ switch ($Mode) {
   -DllPath $DllPath
 
 exit $LASTEXITCODE
+
+
+<#
+Recommended CH2 verification sequence for -Mode voltage:
+  CH2 DC, 1 V/div
+  -> CH2 DC, 500 mV/div
+  -> CH2 DC, 2 V/div
+  -> CH2 AC, 2 V/div
+  -> CH2 DC, 2 V/div
+  -> CH2 DC, 1 V/div
+
+Keep CH1, timebase, trigger and probe settings unchanged.
+Expected mapping hypothesis to verify:
+  arg3 = CH2 vertical range code
+  arg5 = CH2 coupling
+Do not promote the hypothesis until runtime trace confirmation.
+#>
