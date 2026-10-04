@@ -1590,3 +1590,27 @@ The family driver describes normal waveform samples as unsigned 8-bit values 0..
 This agrees with the DSO1102_Controller observation that normal decoded samples are byte-range ADC values expanded into UInt16 containers.
 
 Physical-voltage conversion in DSO1102_Controller should therefore eventually use the verified V/div setting plus per-range calibration/offset information, not a single global volts-per-count constant.
+
+
+## Channel-level calibration block: likely 2 x 9 x 2 structure
+
+The Hantek-family offset implementation reads two calibration endpoints for every vertical range on each of the two analog channels:
+
+```text
+2 channels x 9 V/div ranges x 2 calibration endpoints = 36 UInt16 values
+```
+
+The DSO-1102 vendor API returns 88 bytes through `dsoGetChannelLevel`, which the original application packs into 44 UInt16 values.
+
+This gives a highly plausible structural split:
+
+```text
+packed words  0..35 : 36 range/channel calibration endpoint values
+packed words 36..43 : 8 additional model/device calibration/config values
+```
+
+The family offset algorithm linearly interpolates between the two calibration endpoints for the currently selected V/div range based on the requested normalized vertical position.
+
+This provides a strong explanation for why `dsoSetOffset` depends on both the selected range and the channel-level EEPROM/calibration data.
+
+The exact DSO-1102 word ordering within 0..35 (channel-major vs. range-major and endpoint order) still requires direct runtime correlation and must not be assumed solely from family source code.
