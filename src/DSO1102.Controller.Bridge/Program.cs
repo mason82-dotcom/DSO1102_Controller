@@ -48,6 +48,17 @@ internal static class Program
         ushort calibrationA,
         ushort calibrationB);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoSetTriggerAndSampleRateNewDelegate(
+        uint deviceIndex,
+        uint reserved2,
+        IntPtr triggerSampleConfig,
+        uint reserved4,
+        uint reserved5,
+        uint reserved6,
+        uint reserved7,
+        uint mode);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryExW(string lpFileName, IntPtr hFile, uint dwFlags);
 
@@ -78,8 +89,9 @@ internal static class Program
                 "capture-1ms" => CaptureGroundBaselineV2(dllPath, "capture-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", expectedSampleRateHz: 5_000_000),
                 "capture-2ms" => CaptureGroundBaselineV2(dllPath, "capture-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", expectedSampleRateHz: 5_000_000),
                 "capture-4ms" => CaptureGroundBaselineV2(dllPath, "capture-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", expectedSampleRateHz: 5_000_000),
+                "self-init-400us" => CaptureGroundBaselineV2(dllPath, "self-init-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", expectedSampleRateHz: 5_000_000, selfInitializeTimeBase: true),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, exports.")
             };
         }
         catch (Exception ex)
@@ -330,6 +342,9 @@ internal static class Program
         var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
         var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
         var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
+        var setTriggerAndSampleRateNew = selfInitializeTimeBase
+            ? library.GetDelegate<DsoSetTriggerAndSampleRateNewDelegate>("dsoSetTriggerAndSampleRateNew")
+            : null;
 
         var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
         if (deviceIndex < 0)
@@ -466,7 +481,8 @@ internal static class Program
         bool groundReference,
         ushort? timeBaseCode = null,
         string? timeBaseLabel = null,
-        double? expectedSampleRateHz = null)
+        double? expectedSampleRateHz = null,
+        bool selfInitializeTimeBase = false)
     {
         using var library = VendorLibrary.Load(dllPath);
 
@@ -509,8 +525,55 @@ internal static class Program
         if (calDataStatus == 0)
             return Fail("dsoGetCalData failed; refusing waveform decode without the live calibration bytes.");
 
+        int? timeBaseSetterResult = null;
+        ushort[]? setterPrefix = null;
+
         captureStart(deviceIndex);
         Thread.Sleep(3);
+
+        if (selfInitializeTimeBase)
+        {
+            if (!timeBaseCode.HasValue || setTriggerAndSampleRateNew is null)
+                return Fail("Self-initialization requires a verified time-base code and the New setter export.");
+
+            // Exact prefix observed at the vendor application's real
+            // dsoSetTriggerAndSampleRateNew calls for codes 15..18.
+            // The only changing word in the verified profiles is word[2].
+            setterPrefix =
+            [
+                0, 0, timeBaseCode.Value, 50, 5, 0,
+                127, 192, 124, 192, 128, 0, 0, 256,
+                0, 0, 0, 0, 0, 0, 0, 0, 16368
+            ];
+
+            var setterState = new ushort[256];
+            Array.Copy(setterPrefix, setterState, setterPrefix.Length);
+            Array.Copy(channelLevels, 0, setterState, 23, channelLevels.Length);
+
+            var setterHandle = GCHandle.Alloc(setterState, GCHandleType.Pinned);
+            try
+            {
+                timeBaseSetterResult = setTriggerAndSampleRateNew(
+                    checked((uint)deviceIndex),
+                    0,
+                    setterHandle.AddrOfPinnedObject(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    2);
+            }
+            finally
+            {
+                setterHandle.Free();
+            }
+
+            if (timeBaseSetterResult == 0)
+                return Fail("dsoSetTriggerAndSampleRateNew returned failure; capture was not continued.");
+
+            Thread.Sleep(3);
+        }
+
         triggerEnabled(deviceIndex);
         Thread.Sleep(3);
         force(deviceIndex);
@@ -648,7 +711,10 @@ internal static class Program
                 name = timeBaseCode.HasValue
                     ? $"vendor-traced {timeBaseLabel} read profile"
                     : "vendor-traced CH1 profile",
-                requiresOriginalApplicationInitialization = true,
+                requiresOriginalApplicationInitialization = !selfInitializeTimeBase,
+                selfInitializedTimeBase = selfInitializeTimeBase,
+                timeBaseSetterResult,
+                setterWords = setterPrefix?.Take(23).ToArray(),
                 timeBaseCode,
                 timeBaseLabel,
                 expectedSampleRateHz,
@@ -689,10 +755,12 @@ internal static class Program
             safety = new
             {
                 persistentConfigurationChanged = false,
+                transientTimeBaseConfigurationChanged = selfInitializeTimeBase && timeBaseSetterResult != 0,
                 calibrationWritten = false,
                 flashWritten = false,
                 deviceIdWritten = false,
-                configurationSettersCalled = false,
+                configurationSettersCalled = selfInitializeTimeBase,
+                configurationSetter = selfInitializeTimeBase ? "dsoSetTriggerAndSampleRateNew" : null,
                 waveformRead = waveformReadValid
             }
         });
