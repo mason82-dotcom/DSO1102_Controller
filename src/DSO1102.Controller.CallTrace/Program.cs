@@ -94,10 +94,17 @@ internal static class Program
         IntPtr breakpointAddress = IntPtr.Zero;
         byte originalByte = 0;
         bool breakpointInstalled = false;
+
+        IntPtr returnBreakpointAddress = IntPtr.Zero;
+        byte returnOriginalByte = 0;
+        bool returnBreakpointInstalled = false;
+
+        bool entryCaptured = false;
         bool captured = false;
         uint[] rawStack = [];
         List<ArgumentSnapshot> snapshots = [];
         string? loadedDll = null;
+        uint? returnEax = null;
 
         try
         {
@@ -166,6 +173,8 @@ internal static class Program
                                     .Select(i => BitConverter.ToUInt32(stackBytes, i * 4))
                                     .ToArray();
 
+                                snapshots = new List<ArgumentSnapshot>();
+
                                 for (var i = 1; i <= argCount; i++)
                                 {
                                     var value = rawStack[i];
@@ -174,18 +183,71 @@ internal static class Program
                                         Index = i,
                                         Value = value,
                                         Hex = $"0x{value:X8}",
-                                        PointerPreviewHex = TryReadPointerPreview(processInfo.hProcess, value, 64)
+                                        PointerPreviewHex = TryReadPointerPreview(processInfo.hProcess, value, 128)
                                     });
                                 }
 
                                 EnsureWrite(processInfo.hProcess, breakpointAddress, [originalByte]);
                                 FlushInstructionCache(processInfo.hProcess, breakpointAddress, (UIntPtr)1);
+                                breakpointInstalled = false;
+
+                                returnBreakpointAddress = new IntPtr(unchecked((int)rawStack[0]));
+                                var returnByte = new byte[1];
+                                EnsureRead(processInfo.hProcess, returnBreakpointAddress, returnByte);
+                                returnOriginalByte = returnByte[0];
+                                EnsureWrite(processInfo.hProcess, returnBreakpointAddress, [0xCC]);
+                                FlushInstructionCache(processInfo.hProcess, returnBreakpointAddress, (UIntPtr)1);
+                                returnBreakpointInstalled = true;
 
                                 context.Eip = unchecked((uint)breakpointAddress.ToInt32());
                                 if (!SetThreadContext(thread, ref context))
                                     throw new Win32Exception(Marshal.GetLastWin32Error(), "SetThreadContext failed.");
 
-                                breakpointInstalled = false;
+                                entryCaptured = true;
+                            }
+                            finally
+                            {
+                                CloseHandle(thread);
+                            }
+                        }
+                        else if (exception.ExceptionRecord.ExceptionCode == ExceptionBreakpoint &&
+                                 returnBreakpointInstalled &&
+                                 address == returnBreakpointAddress)
+                        {
+                            var thread = OpenThread(
+                                ThreadGetContext | ThreadSetContext,
+                                false,
+                                debugEvent.dwThreadId);
+
+                            if (thread == IntPtr.Zero)
+                                throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenThread failed.");
+
+                            try
+                            {
+                                var context = CONTEXT32.Create();
+                                context.ContextFlags = ContextControl | ContextInteger;
+
+                                if (!GetThreadContext(thread, ref context))
+                                    throw new Win32Exception(Marshal.GetLastWin32Error(), "GetThreadContext failed.");
+
+                                returnEax = context.Eax;
+
+                                foreach (var snapshot in snapshots)
+                                {
+                                    snapshot.PointerPreviewHexAfter =
+                                        TryReadPointerPreview(processInfo.hProcess, snapshot.Value, 128);
+                                    snapshot.ChangedAfterCall =
+                                        snapshot.PointerPreviewHex != snapshot.PointerPreviewHexAfter;
+                                }
+
+                                EnsureWrite(processInfo.hProcess, returnBreakpointAddress, [returnOriginalByte]);
+                                FlushInstructionCache(processInfo.hProcess, returnBreakpointAddress, (UIntPtr)1);
+                                returnBreakpointInstalled = false;
+
+                                context.Eip = unchecked((uint)returnBreakpointAddress.ToInt32());
+                                if (!SetThreadContext(thread, ref context))
+                                    throw new Win32Exception(Marshal.GetLastWin32Error(), "SetThreadContext failed.");
+
                                 captured = true;
                                 shouldExitLoop = true;
                             }
@@ -234,6 +296,19 @@ internal static class Program
                 }
             }
 
+            if (returnBreakpointInstalled && returnBreakpointAddress != IntPtr.Zero)
+            {
+                try
+                {
+                    EnsureWrite(processInfo.hProcess, returnBreakpointAddress, [returnOriginalByte]);
+                    FlushInstructionCache(processInfo.hProcess, returnBreakpointAddress, (UIntPtr)1);
+                }
+                catch
+                {
+                    // Best effort only while unwinding.
+                }
+            }
+
             CloseHandle(processInfo.hThread);
             CloseHandle(processInfo.hProcess);
         }
@@ -241,6 +316,7 @@ internal static class Program
         return new TraceResult
         {
             Ok = captured,
+            EntryCaptured = entryCaptured,
             Captured = captured,
             Export = exportName,
             ExportRva = $"0x{exportRva:X8}",
@@ -248,10 +324,13 @@ internal static class Program
             VendorDll = dllPath,
             LoadedDll = loadedDll,
             ReturnAddress = rawStack.Length > 0 ? $"0x{rawStack[0]:X8}" : null,
+            ReturnEax = returnEax.HasValue ? $"0x{returnEax.Value:X8}" : null,
             Arguments = snapshots,
             Instructions = captured
-                ? "Call captured. Vendor application continues normally after the one-shot breakpoint."
-                : "No matching call was captured. Run/acquire a waveform in the vendor application while the tracer is active."
+                ? "Entry and return captured. Pointer previews show memory before and after the vendor call."
+                : entryCaptured
+                    ? "Entry was captured, but the function return was not observed before timeout/process exit."
+                    : "No matching call was captured. Run/acquire a waveform in the vendor application while the tracer is active."
         };
     }
 
@@ -499,6 +578,7 @@ internal static class Program
     private sealed class TraceResult
     {
         public bool Ok { get; init; }
+        public bool EntryCaptured { get; init; }
         public bool Captured { get; init; }
         public string Export { get; init; } = "";
         public string ExportRva { get; init; } = "";
@@ -506,6 +586,7 @@ internal static class Program
         public string VendorDll { get; init; } = "";
         public string? LoadedDll { get; init; }
         public string? ReturnAddress { get; init; }
+        public string? ReturnEax { get; init; }
         public List<ArgumentSnapshot> Arguments { get; init; } = [];
         public string Instructions { get; init; } = "";
     }
@@ -516,6 +597,8 @@ internal static class Program
         public uint Value { get; init; }
         public string Hex { get; init; } = "";
         public string? PointerPreviewHex { get; init; }
+        public string? PointerPreviewHexAfter { get; set; }
+        public bool? ChangedAfterCall { get; set; }
     }
 
     private static class PeExports
