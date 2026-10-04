@@ -1860,3 +1860,52 @@ arg6 == 3
 This matches historical Hantek/Voltcraft control-state documentation in which trigger selector value 3 denotes EXT.
 
 Thus `arg6` is strongly identified as the trigger-source/relay selector, with value 3 selecting the external-trigger relay. A dedicated DSO-1102 trigger-source trace is still desirable before all selector values are promoted as verified UI mappings.
+
+
+## Trigger-source family mapping and dedicated trace
+
+Historical DSO-2250 protocol sources show a dedicated 8-byte trigger command. Its trigger byte contains a 2-bit source field plus a 1-bit slope field.
+
+For the DSO-2250-specific path, the external family code maps analog channels differently from the older 2090/2150 path. The historical control layer feeds the 2250 trigger command with:
+
+```text
+CH1 -> source field 2
+CH2 -> source field 3
+EXT -> source field 0
+```
+
+This is family-level evidence only. The DSO-1102 vendor DLL exposes the eight-slot helper `_dsoSetTrigIn@32`, and its exact scalar mapping must be captured directly before the bridge invokes it.
+
+The call tracer now supports a complete low-16 argument-signature deduplication mode. The helper script exposes:
+
+```text
+Trace-AnalogConfig.ps1 -Mode trigger
+```
+
+which observes `_dsoSetTrigIn@32` with eight arguments and suppresses consecutive calls whose complete low-16 signature is unchanged.
+
+Recommended first runtime sequence:
+
+```text
+start: trigger CH1, rising
+CH2
+EXT
+CH1
+```
+
+Keep trigger level and slope fixed for this first run. After source mapping is established, a separate rising/falling trace can isolate the slope field.
+
+## Deep-memory caller-buffer safety
+
+Historical OpenHantek DSO-2250 model data distinguishes two-channel and one-channel record-length limits. In that family implementation the deep record can reach:
+
+```text
+two active channels: 524,288 samples/channel
+one active channel:  1,048,576 samples
+```
+
+The DSO-1102 has directly demonstrated 524,288 written samples per channel, but the one-channel doubling has not yet been observed on this exact unit.
+
+To avoid a possible caller-buffer overrun while that behavior is tested, the bridge now allocates 1,048,576 UInt16 elements per waveform buffer. This is a host-side safety margin only; it does not request a larger acquisition or send any additional device command.
+
+Full-buffer analysis estimates the populated prefix from the last non-zero write before calculating ADC statistics, so an untouched zero-filled guard tail is not mistaken for real waveform data.
