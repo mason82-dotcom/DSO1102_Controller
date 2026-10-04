@@ -869,8 +869,33 @@ internal static class Program
         var allPeriods = risingPeriods.Concat(fallingPeriods).ToArray();
 
         double? meanPeriodSamples = allPeriods.Length > 0 ? allPeriods.Average() : null;
+        double? periodStdDevSamples = null;
+        double? periodCv = null;
+
+        if (allPeriods.Length > 0 && meanPeriodSamples > 0)
+        {
+            var mean = meanPeriodSamples.Value;
+            var variance = allPeriods.Select(x =>
+            {
+                var d = x - mean;
+                return d * d;
+            }).Average();
+
+            periodStdDevSamples = Math.Sqrt(variance);
+            periodCv = periodStdDevSamples.Value / mean;
+        }
+
+        // A valid repetitive waveform must have several same-polarity periods
+        // and very low period jitter. This rejects random threshold crossings
+        // on a quiet channel such as CH2.
+        var periodic = allPeriods.Length >= 4 &&
+                       periodCv.HasValue &&
+                       periodCv.Value <= 0.05;
+
         double? estimatedSampleRateAt1kHz =
-            meanPeriodSamples.HasValue ? meanPeriodSamples.Value * 1000.0 : null;
+            periodic && meanPeriodSamples.HasValue
+                ? meanPeriodSamples.Value * 1000.0
+                : null;
         double? estimatedSampleIntervalNs =
             estimatedSampleRateAt1kHz.HasValue && estimatedSampleRateAt1kHz.Value > 0
                 ? 1_000_000_000.0 / estimatedSampleRateAt1kHz.Value
@@ -882,7 +907,8 @@ internal static class Program
 
         return new
         {
-            detected = rising.Count >= 2 || falling.Count >= 2,
+            detected = periodic,
+            confidence = periodic ? "high" : "rejected_nonperiodic",
             thresholdCounts = threshold,
             stableSamplesRequired = stableSamples,
             risingEdgeCount = rising.Count,
@@ -892,6 +918,8 @@ internal static class Program
             risingPeriodSamples = PeriodStats(risingPeriods),
             fallingPeriodSamples = PeriodStats(fallingPeriods),
             combinedMeanPeriodSamples = meanPeriodSamples,
+            combinedPeriodStdDevSamples = periodStdDevSamples,
+            combinedPeriodCoefficientOfVariation = periodCv,
             ifSignalIs1kHz = new
             {
                 referenceFrequencyHz = 1000,
