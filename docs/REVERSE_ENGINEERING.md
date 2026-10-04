@@ -549,3 +549,46 @@ A runtime trace of `dsoSetTriggerAndSampleRate` during normal vendor-application
 Time-base reconstruction therefore remains focused on `dsoSetTriggerAndSampleRateNew`.
 
 The call tracer now supports duplicate suppression based on a selected pointer argument. For time-base work, argument 3 is used as the state key: the first configuration is recorded, subsequent byte-identical argument-3 states are suppressed, and only actual configuration changes are retained. This prevents recurring acquisition/refresh calls from consuming the trace budget before UI changes occur.
+
+
+## Verified time-base code mapping from filtered New-setter trace
+
+A filtered runtime trace of `dsoSetTriggerAndSampleRateNew` observed 16 calls, suppressed 8 byte-identical argument-3 states, and retained 8 distinct states.
+
+The final ordered UI sequence was:
+
+```text
+400 us/div -> 1 ms/div -> 2 ms/div -> 4 ms/div
+```
+
+For the four user-selected time bases, argument 3 had the following stable prefix:
+
+```text
+                 word[0] word[1] word[2] word[3] word[4] word[5]
+400 us/div          0       0      15      50       5       0
+1 ms/div            0       0      16      50       5       0
+2 ms/div            0       0      17      50       5       0
+4 ms/div            0       0      18      50       5       0
+```
+
+Therefore, for this normal acquisition mode:
+
+```text
+timeBaseCode 15 = 400 us/div
+timeBaseCode 16 = 1 ms/div
+timeBaseCode 17 = 2 ms/div
+timeBaseCode 18 = 4 ms/div
+```
+
+Earlier calls with `word[4] = 6` are initialization/alternate internal states and must not be used as the normal UI mapping.
+
+If the waveform record remains 10,240 samples and spans approximately 10.24 horizontal divisions, the expected sample-rate table is:
+
+```text
+400 us/div -> 2.5 MS/s   (4.096 ms record)
+1 ms/div   -> 1.0 MS/s   (10.24 ms record)  [already measured]
+2 ms/div   -> 500 kS/s   (20.48 ms record)
+4 ms/div   -> 250 kS/s   (40.96 ms record)
+```
+
+Only the 1 ms/div -> ~1 MS/s point is currently measured from the internal ~1 kHz CAL waveform. The other three rates are predictions to be verified by capture timing before being promoted to hardware facts.
