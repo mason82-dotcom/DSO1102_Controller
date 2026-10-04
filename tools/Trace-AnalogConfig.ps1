@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('voltage','offset','channel')]
+    [ValidateSet('voltage','offset','channel','trigger')]
     [string]$Mode,
 
     [int]$MaxCalls = 16,
@@ -20,18 +20,28 @@ switch ($Mode) {
         $argumentCount = 6
         $distinctPointerArg = 0
         $distinctScalarArg = 0
+        $distinctLow16Signature = 0
     }
     'offset' {
         $export = 'dsoSetOffset'
         $argumentCount = 6
         $distinctPointerArg = 2
         $distinctScalarArg = 0
+        $distinctLow16Signature = 0
     }
     'channel' {
         $export = '_dsoSetChIn@8'
         $argumentCount = 2
         $distinctPointerArg = 0
         $distinctScalarArg = 2
+        $distinctLow16Signature = 0
+    }
+    'trigger' {
+        $export = '_dsoSetTrigIn@32'
+        $argumentCount = 8
+        $distinctPointerArg = 0
+        $distinctScalarArg = 0
+        $distinctLow16Signature = 1
     }
     default {
         throw "Unsupported mode: $Mode"
@@ -46,6 +56,7 @@ switch ($Mode) {
   -TotalTimeoutMs $TotalTimeoutMs `
   -DistinctPointerArg $distinctPointerArg `
   -DistinctScalarArg $distinctScalarArg `
+  -DistinctLow16Signature $distinctLow16Signature `
   -ExePath $ExePath `
   -DllPath $DllPath
 
@@ -101,4 +112,21 @@ Expected DSO-2250-family scalar sequence for -Mode channel:
   neither        -> arg2 = 1
 
 DSO-1102 has already directly shown 0 -> 2. Value 3 remains to be verified.
+#>
+
+
+<#
+Recommended trigger-source verification sequence for -Mode trigger:
+  Keep CH1 and CH2 enabled.
+  Keep V/div, coupling, vertical positions, timebase and memory depth unchanged.
+  Start with trigger source CH1 and rising edge.
+  -> trigger source CH2
+  -> trigger source EXT
+  -> trigger source CH1
+
+Do not change trigger level or slope during this first run.
+
+The tracer observes _dsoSetTrigIn@32 only. It never invokes the helper.
+Calls are deduplicated by the complete low-16 argument signature so recurring
+internal refresh calls do not consume the trace budget.
 #>
