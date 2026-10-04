@@ -806,3 +806,49 @@ decoded record span   ~= 104.87 ms/channel
 ```
 
 The visible 1 ms/div screen is therefore a viewport into a much deeper decoded acquisition record; it is not equivalent to the full capture duration.
+
+
+## 2 ms/div full-buffer verification
+
+A full-buffer `capture-2ms` run verifies that time-base code 17 uses the same decoded ~5 MS/s deep-memory stream as the 1 ms/div profile.
+
+Per channel:
+
+```text
+buffer length        = 524,288 samples
+valid ADC8 samples   = 524,287
+excluded sentinel    = 1
+valid fraction       = 0.9999980926513672
+```
+
+CH1 remains a clean two-plateau square wave across the complete record:
+
+```text
+rising edges         = 105
+falling edges        = 104
+rising periods       = 104
+falling periods      = 103
+mean period          = 4998.391304347826 samples
+period stddev        = 1.3429082792591764 samples
+period CV            = 0.0002686680968917048
+edge agreement       = true
+```
+
+Using the nominal 1 kHz internal CAL source:
+
+```text
+estimated sample rate     = 4,998,391.3043 samples/s
+estimated sample interval = 200.064369 ns
+estimated record duration = 104.891148 ms
+```
+
+Conclusion:
+
+```text
+timeBaseCode 17 = 2 ms/div
+decoded sample stream ~= 5 MS/s
+decoded record depth  = 524,288 samples/channel
+decoded record span   ~= 104.89 ms/channel
+```
+
+Therefore, changing from 1 ms/div (code 16) to 2 ms/div (code 17) does not change the decoded sample clock or deep-memory record length. The time-base change is implemented at a later display/viewport stage in the vendor application for these two settings.
