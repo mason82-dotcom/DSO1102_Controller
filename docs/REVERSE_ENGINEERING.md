@@ -592,3 +592,26 @@ If the waveform record remains 10,240 samples and spans approximately 10.24 hori
 ```
 
 Only the 1 ms/div -> ~1 MS/s point is currently measured from the internal ~1 kHz CAL waveform. The other three rates are predictions to be verified by capture timing before being promoted to hardware facts.
+
+
+## Waveform-read profile tracing across time bases
+
+Setter codes and waveform-read configuration must not be assumed to be identical. The filtered New-setter trace maps UI time bases to setter word[2] values 15..18, while an earlier real `dsoGetChannelData` trace showed a different read-state prefix for the previously characterized profile.
+
+To recover the exact read-state structure used for each UI time base, trace `dsoGetChannelData` directly and suppress duplicate calls by argument 4:
+
+```powershell
+powershell -ExecutionPolicy Bypass \
+  -File .\tools\Trace-CaptureProfiles.ps1 \
+  -MaxCalls 8 \
+  -IdleTimeoutMs 30000 \
+  -TotalTimeoutMs 120000
+```
+
+Then switch the vendor UI in this order:
+
+```text
+400 us/div -> 1 ms/div -> 2 ms/div -> 4 ms/div
+```
+
+Argument 4 is the trigger/sample configuration pointer used by the actual waveform read. These captured states are the authoritative source for reconstructing independent bridge captures at each time base.
