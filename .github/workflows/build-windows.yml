@@ -35,6 +35,12 @@ jobs:
       - name: Publish x86 bridge
         run: dotnet publish .\src\DSO1102.Controller.Bridge\DSO1102.Controller.Bridge.csproj -c Release -r win-x86 --self-contained true --no-restore -o .\artifacts\DSO1102_Bridge-win-x86
 
+      - name: Bundle x86 bridge with x64 app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .\artifacts\DSO1102_Controller-win-x64\bridge | Out-Null
+          Copy-Item .\artifacts\DSO1102_Bridge-win-x86\* .\artifacts\DSO1102_Controller-win-x64\bridge\ -Recurse -Force
+
       - name: Restore x86 call tracer
         run: dotnet restore .\src\DSO1102.Controller.CallTrace\DSO1102.Controller.CallTrace.csproj -r win-x86
 
