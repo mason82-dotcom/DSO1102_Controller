@@ -17,6 +17,7 @@ public sealed record DsoSettings
 {
     public double SampleRate { get; init; } = 100_000;
     public int RecordLength { get; init; } = 4096;
+    public double TimePerDivisionSeconds { get; init; } = 0.001;
     public bool Channel1Enabled { get; init; } = true;
     public bool Channel2Enabled { get; init; } = true;
     public double Channel1VoltsPerDivision { get; init; } = 1.0;
