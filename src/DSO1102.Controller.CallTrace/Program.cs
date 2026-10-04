@@ -41,6 +41,9 @@ internal static class Program
             var distinctPointerArg = int.TryParse(GetArg(args, "--distinct-pointer-arg"), out var parsedDistinctPointerArg)
                 ? parsedDistinctPointerArg
                 : 0;
+            var distinctScalarArg = int.TryParse(GetArg(args, "--distinct-scalar-arg"), out var parsedDistinctScalarArg)
+                ? parsedDistinctScalarArg
+                : 0;
 
             if (!File.Exists(exePath))
                 throw new FileNotFoundException("Vendor application not found.", exePath);
@@ -56,12 +59,16 @@ internal static class Program
                 throw new ArgumentOutOfRangeException(nameof(totalTimeoutMs), "Total timeout must be 1000..1800000 ms.");
             if (distinctPointerArg is < 0 or > 16)
                 throw new ArgumentOutOfRangeException(nameof(distinctPointerArg), "Distinct pointer argument must be 0..16.");
+            if (distinctScalarArg is < 0 or > 16)
+                throw new ArgumentOutOfRangeException(nameof(distinctScalarArg), "Distinct scalar argument must be 0..16.");
+            if (distinctPointerArg > 0 && distinctScalarArg > 0)
+                throw new ArgumentException("Use either --distinct-pointer-arg or --distinct-scalar-arg, not both.");
 
             var exportRva = PeExports.GetExportRva(dllPath, exportName);
             if (exportRva == 0)
                 throw new EntryPointNotFoundException($"Export '{exportName}' not found in '{dllPath}'.");
 
-            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs, distinctPointerArg);
+            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs, distinctPointerArg, distinctScalarArg);
             Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             return result.Calls.Count > 0 ? 0 : 2;
         }
@@ -85,7 +92,8 @@ internal static class Program
         int maxCalls,
         int idleTimeoutMs,
         int totalTimeoutMs,
-        int distinctPointerArg)
+        int distinctPointerArg,
+        int distinctScalarArg)
     {
         var startup = new STARTUPINFO
         {
@@ -125,6 +133,7 @@ internal static class Program
         string? loadedDll = null;
         var calls = new List<CallTrace>();
         string? lastDistinctPointerPreview = null;
+        ushort? lastDistinctScalarValue = null;
         var observedCallCount = 0;
         var suppressedDuplicateCount = 0;
 
@@ -299,6 +308,23 @@ internal static class Program
                                         lastDistinctPointerPreview = currentPreview;
                                     }
                                 }
+                                else if (distinctScalarArg > 0)
+                                {
+                                    var distinctSnapshot = snapshots.FirstOrDefault(x => x.Index == distinctScalarArg);
+                                    var currentValue = distinctSnapshot?.Low16;
+
+                                    if (currentValue.HasValue &&
+                                        lastDistinctScalarValue.HasValue &&
+                                        currentValue.Value == lastDistinctScalarValue.Value)
+                                    {
+                                        recordCall = false;
+                                        suppressedDuplicateCount++;
+                                    }
+                                    else if (currentValue.HasValue)
+                                    {
+                                        lastDistinctScalarValue = currentValue.Value;
+                                    }
+                                }
 
                                 if (recordCall)
                                 {
@@ -402,6 +428,7 @@ internal static class Program
             ObservedCallCount = observedCallCount,
             SuppressedDuplicateCount = suppressedDuplicateCount,
             DistinctPointerArg = distinctPointerArg,
+            DistinctScalarArg = distinctScalarArg,
             IdleTimeoutMs = idleTimeoutMs,
             TotalTimeoutMs = totalTimeoutMs,
             Calls = calls,
@@ -686,6 +713,7 @@ internal static class Program
         public int ObservedCallCount { get; init; }
         public int SuppressedDuplicateCount { get; init; }
         public int DistinctPointerArg { get; init; }
+        public int DistinctScalarArg { get; init; }
         public int IdleTimeoutMs { get; init; }
         public int TotalTimeoutMs { get; init; }
         public List<CallTrace> Calls { get; init; } = [];
