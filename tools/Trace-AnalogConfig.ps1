@@ -88,3 +88,14 @@ Recommended offset verification sequence for -Mode offset:
 Keep V/div, coupling, timebase, trigger, probe and CH2 settings unchanged.
 The tracer is read-only; dsoSetOffset is only observed, never invoked.
 #>
+
+
+<#
+Expected DSO-2250-family scalar sequence for -Mode channel:
+  CH1 only       -> arg2 = 0
+  both channels  -> arg2 = 2
+  CH2 only       -> arg2 = 3
+  neither        -> arg2 = 1
+
+DSO-1102 has already directly shown 0 -> 2. Value 3 remains to be verified.
+#>
