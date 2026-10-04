@@ -1043,3 +1043,56 @@ powershell -ExecutionPolicy Bypass \
 ```
 
 The tracer only observes calls made by the original application. It does not invoke these setters itself.
+
+
+## Self-initialized 400 us/div verification
+
+The first guarded self-initialization run succeeded without using the original vendor UI for the time-base operation:
+
+```text
+command                         = self-init-400us
+requiresOriginalApplicationInitialization = false
+selfInitializedTimeBase         = true
+timeBaseSetterResult            = 1
+capture state                   = 3 (CAPTURE_READY)
+vendorReadResult                = 1
+```
+
+The full decoded record remained valid:
+
+```text
+buffer depth/channel       = 524,288 samples
+valid ADC8 samples         = 524,287
+rising edges               = 105
+falling edges              = 104
+mean CAL period            = 4998.574879227053 samples
+estimated sample rate      = 4,998,574.8792 samples/s
+estimated sample interval  = 200.057021 ns
+estimated record duration  = 104.887295 ms
+```
+
+Safety reporting for the successful run:
+
+```text
+persistentConfigurationChanged       = false
+transientTimeBaseConfigurationChanged = true
+calibrationWritten                    = false
+flashWritten                          = false
+deviceIdWritten                       = false
+configurationSettersCalled            = true
+configurationSetter                   = dsoSetTriggerAndSampleRateNew
+waveformRead                          = true
+```
+
+This verifies that the traced `dsoSetTriggerAndSampleRateNew` ABI and 400 us/div state can be driven directly by the x86 bridge.
+
+Because runtime traces showed the same setter structure for codes 15..18 with only `word[2]` changing, the bridge now exposes:
+
+```text
+self-init-400us -> code 15
+self-init-1ms   -> code 16
+self-init-2ms   -> code 17
+self-init-4ms   -> code 18
+```
+
+These commands still do not constitute complete cold device initialization: analog voltage range/coupling, offset and filter state are not yet set independently by the bridge.
