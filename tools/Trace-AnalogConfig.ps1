@@ -18,16 +18,19 @@ switch ($Mode) {
     'voltage' {
         $export = 'dsoSetVoltageAndCoupling'
         $argumentCount = 6
+        $distinctPointerArg = 0
         $distinctScalarArg = 0
     }
     'offset' {
         $export = 'dsoSetOffset'
         $argumentCount = 6
+        $distinctPointerArg = 2
         $distinctScalarArg = 0
     }
     'channel' {
         $export = '_dsoSetChIn@8'
         $argumentCount = 2
+        $distinctPointerArg = 0
         $distinctScalarArg = 2
     }
     default {
@@ -41,7 +44,7 @@ switch ($Mode) {
   -MaxCalls $MaxCalls `
   -IdleTimeoutMs $IdleTimeoutMs `
   -TotalTimeoutMs $TotalTimeoutMs `
-  -DistinctPointerArg 0 `
+  -DistinctPointerArg $distinctPointerArg `
   -DistinctScalarArg $distinctScalarArg `
   -ExePath $ExePath `
   -DllPath $DllPath
