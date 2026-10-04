@@ -72,7 +72,7 @@ public partial class MainWindow : Window
                     : $" — {_device.DeviceInfo.Firmware}");
 
             StatusText.Text =
-                "DSO-1102 verbunden. Verifizierter 1-ms/div-Rohframepfad; Amplitude noch als ADC-Counts.";
+                "DSO-1102 verbunden. 1-ms/div-Rohframepfad; Amplitude als ADC-Counts, Analog-Frontend bleibt im aktuellen Gerätezustand.";
 
             RunButton.IsEnabled = true;
             SingleButton.IsEnabled = true;
