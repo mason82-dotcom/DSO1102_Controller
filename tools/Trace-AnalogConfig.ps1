@@ -63,17 +63,24 @@ Do not promote the hypothesis until runtime trace confirmation.
 
 
 <#
-Recommended channel-enable verification sequence for -Mode channel:
-  Start with CH1 enabled and CH2 disabled.
-  -> enable CH2
-  -> disable CH2
-  -> enable CH2
-  -> disable CH1
-  -> enable CH1
+-Mode channel traces the internal helper _dsoSetChIn@8 for reverse-engineering
+only. Runtime tracing proved that its observed calls return inside
+dsoSetTriggerAndSampleRateNew (DLL RVA 0x53FD), so it must NOT be treated as a
+verified CH1/CH2 UI enable/disable setter.
 
-Keep V/div, coupling, timebase, trigger and probe settings unchanged.
+Use -Mode offset for the next controlled analog-state trace.
+#>
 
-This trace is read-only. The candidate export _dsoSetChIn@8 is selected because
-its name strongly suggests channel-input control, but semantics must be proven
-from the runtime trace before the bridge invokes it.
+<#
+Recommended offset verification sequence for -Mode offset:
+  Keep CH1 enabled, DC coupled, 1 V/div.
+  Keep CH2 unchanged.
+  Start with the CH1 vertical position centered.
+  -> move CH1 position upward by exactly 1 major division
+  -> return CH1 to center
+  -> move CH1 position downward by exactly 1 major division
+  -> return CH1 to center
+
+Keep V/div, coupling, timebase, trigger, probe and CH2 settings unchanged.
+The tracer is read-only; dsoSetOffset is only observed, never invoked.
 #>
