@@ -896,3 +896,19 @@ decoded record span   ~= 104.87 ms/channel
 ```
 
 Together with the verified 1 ms/div and 2 ms/div profiles, codes 16, 17 and 18 all use the same ~5 MS/s 512 KiSample deep-memory acquisition. The UI time-base difference for these settings is therefore a display/viewport operation rather than an ADC sample-clock or record-depth change.
+
+
+## Verified time-base summary
+
+Current runtime-verified mapping:
+
+| UI time base | Code | Decoded sample rate | Decoded depth/channel | Status |
+| --- | ---: | ---: | ---: | --- |
+| 400 us/div | 15 | ~5 MS/s | not yet re-verified with full-buffer analyzer | sample rate verified |
+| 1 ms/div | 16 | ~5 MS/s | 524,288 samples | full-buffer verified |
+| 2 ms/div | 17 | ~5 MS/s | 524,288 samples | full-buffer verified |
+| 4 ms/div | 18 | ~5 MS/s | 524,288 samples | full-buffer verified |
+
+For codes 16..18, changing Time/div does not change the decoded ADC sample clock or decoded record depth. The visible horizontal scale is therefore implemented downstream as viewport/rendering behavior for those profiles.
+
+The remaining characterization item in this block is a fresh `capture-400us` run with the full-buffer analyzer enabled, to determine whether code 15 also writes the same 524,288-sample deep-memory record.
