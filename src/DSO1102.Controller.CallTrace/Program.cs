@@ -495,6 +495,16 @@ internal static class Program
             _ => null
         };
 
+        static string? TriggerSourceLabel(ushort code) => code switch
+        {
+            0 => "CH1",
+            1 => "CH2",
+            2 => "ALT",
+            3 => "EXT",
+            4 => "EXT/10",
+            _ => null
+        };
+
         static ushort? Word(ushort[]? words, int index) =>
             words is not null && index >= 0 && index < words.Length ? words[index] : null;
 
@@ -517,8 +527,10 @@ internal static class Program
                 ch1Coupling = CouplingLabel(ch1Coupling),
                 ch2CouplingCode = ch2Coupling,
                 ch2Coupling = CouplingLabel(ch2Coupling),
-                triggerRelaySelector = triggerSelector,
-                externalTriggerRelaySelected = triggerSelector == 3
+                triggerSourceCode = triggerSelector,
+                triggerSource = TriggerSourceLabel(triggerSelector),
+                externalTriggerRelaySelected = triggerSelector == 3,
+                externalTriggerDivideBy10Selected = triggerSelector == 4
             };
         }
 
@@ -563,7 +575,8 @@ internal static class Program
             return new
             {
                 deviceIndex = A(1),
-                sourceSelectorInput = sourceInput,
+                triggerSourceCode = sourceInput,
+                triggerSource = TriggerSourceLabel(sourceInput),
                 translatedSourceBits = sourceBits,
                 arg3Bit = A(3) & 1,
                 arg4Bit = A(4) & 1,
@@ -597,13 +610,14 @@ internal static class Program
                 ch1Range = RangeLabel(ch1Range),
                 ch2RangeCode = ch2Range,
                 ch2Range = RangeLabel(ch2Range),
-                thirdPathSelector = selector,
+                triggerSourceCode = selector,
+                triggerSource = TriggerSourceLabel(selector),
                 ch1CalibrationStart = Word(calibration, checked((int)ch1Range * 2)),
                 ch1CalibrationEnd = Word(calibration, checked((int)ch1Range * 2 + 1)),
                 ch2CalibrationStart = Word(calibration, checked(18 + (int)ch2Range * 2)),
                 ch2CalibrationEnd = Word(calibration, checked(18 + (int)ch2Range * 2 + 1)),
-                thirdCalibrationStart = Word(calibration, thirdCalibrationIndex),
-                thirdCalibrationEnd = Word(calibration, thirdCalibrationIndex + 1),
+                triggerCalibrationStart = Word(calibration, thirdCalibrationIndex),
+                triggerCalibrationEnd = Word(calibration, thirdCalibrationIndex + 1),
                 formula = "calibrated = start + (255 - positionRaw) * (end - start) / 255; hardware command value is then scaled by 16",
                 note = "CH1/CH2 range and calibration indexing are statically verified from DSO1102USB.dll."
             };
