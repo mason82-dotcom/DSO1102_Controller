@@ -1601,28 +1601,56 @@ This agrees with the DSO1102_Controller observation that normal decoded samples 
 Physical-voltage conversion in DSO1102_Controller should therefore eventually use the verified V/div setting plus per-range calibration/offset information, not a single global volts-per-count constant.
 
 
-## Channel-level calibration block: likely 2 x 9 x 2 structure
+## Channel-level calibration block: statically verified layout
 
-The Hantek-family offset implementation reads two calibration endpoints for every vertical range on each of the two analog channels:
+Direct disassembly of `DSO1102USB.dll` export `dsoSetOffset` (RVA `0x3180`) resolves the 44 packed calibration words.
 
-```text
-2 channels x 9 V/div ranges x 2 calibration endpoints = 36 UInt16 values
-```
-
-The DSO-1102 vendor API returns 88 bytes through `dsoGetChannelLevel`, which the original application packs into 44 UInt16 values.
-
-This gives a highly plausible structural split:
+The exact layout is:
 
 ```text
-packed words  0..35 : 36 range/channel calibration endpoint values
-packed words 36..43 : 8 additional model/device calibration/config values
+words  0..17  = CH1, 9 V/div ranges x {start,end}
+words 18..35  = CH2, 9 V/div ranges x {start,end}
+words 36..43  = trigger/additional calibration pairs
 ```
 
-The family offset algorithm linearly interpolates between the two calibration endpoints for the currently selected V/div range based on the requested normalized vertical position.
+For CH1, range code `n` selects:
 
-This provides a strong explanation for why `dsoSetOffset` depends on both the selected range and the channel-level EEPROM/calibration data.
+```text
+start = calibration[2*n]
+end   = calibration[2*n + 1]
+```
 
-The exact DSO-1102 word ordering within 0..35 (channel-major vs. range-major and endpoint order) still requires direct runtime correlation and must not be assumed solely from family source code.
+For CH2:
+
+```text
+start = calibration[18 + 2*n]
+end   = calibration[18 + 2*n + 1]
+```
+
+The DLL contains a nine-way switch for each channel, proving that the V/div code range is 0..8.
+
+The offset interpolation uses the exact constant `1/255`:
+
+```text
+channelRaw =
+    calibrationStart
+    + (255 - positionByte)
+      * (calibrationEnd - calibrationStart)
+      / 255
+```
+
+The remaining words are consumed by the third offset/trigger path as:
+
+```text
+selector 0 -> words 36,37
+selector 1 -> words 38,39
+words 40,41 -> not referenced by dsoSetOffset
+selector other -> words 42,43
+```
+
+This confirms that the first 36 packed words are not merely family-level evidence; their channel/range ordering is directly verified in the DSO-1102 vendor DLL.
+
+The bridge's read-only `info` command now emits this decoded structure as CH1/CH2 range calibration tables plus the remaining trigger calibration pairs.
 
 
 ## Correct DSO-2250 channel-mode encoding
@@ -1716,3 +1744,37 @@ arg6 = packed per-range calibration table
 ```
 
 This mapping is not yet promoted to a verified ABI. The controlled `dsoSetOffset` runtime trace should test it by moving only CH1 vertically while leaving CH2, trigger level, V/div and coupling unchanged.
+
+
+## dsoSetOffset DLL-level argument roles
+
+Direct analysis of the `dsoSetOffset` export establishes these six argument roles:
+
+```text
+arg1 = device index
+arg2 = pointer to live offset/trigger-position state
+arg3 = CH1 V/div range code (0..8)
+arg4 = CH2 V/div range code (0..8)
+arg5 = three-way selector for the third/trigger calibration path
+arg6 = pointer to the 44-word packed calibration table
+```
+
+Within the state pointed to by arg2:
+
+```text
+word 0 -> CH1 position input
+word 1 -> CH2 position input
+word 2 -> third-path position when arg5 == 0
+word 3 -> third-path position when arg5 == 1
+word 4 -> third-path position otherwise
+```
+
+The export computes three calibrated 16-bit values and passes the resulting six bytes to an internal helper that sends an eight-byte driver command beginning with:
+
+```text
+0x12 0x0F
+```
+
+followed by the six calculated bytes.
+
+The exact semantic label for arg5 remains to be confirmed at runtime. Based on the original application's surrounding trigger logic and Hantek-family behavior, it is likely related to trigger-source selection, but that label is not yet promoted to a protocol fact.
