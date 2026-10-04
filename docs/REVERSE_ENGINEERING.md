@@ -1481,3 +1481,112 @@ mode 19 = 5 ms
 The DSO-1102 uses different verified codes (15=400 us, 16=1 ms, 17=2 ms, 18=4 ms), so exact numeric time-base codes are model/API-generation specific and must not be transferred across families.
 
 The useful family-level concept is that horizontal scale is represented by a discrete mode field, while capture/record behavior can be controlled by additional memory-related fields.
+
+
+## libsigrok / OpenHantek family corroboration
+
+Independent Hantek-family reverse engineering in libsigrok provides several strong structural matches to the DSO-1102 observations. This material is used only as behavioral/reference evidence; no GPL source code is copied into this project.
+
+### 512K record mode
+
+The libsigrok Hantek DSO driver defines two record sizes for its DSO-2250 profile:
+
+```text
+10,240 samples
+524,288 samples
+```
+
+This exactly matches the short and deep-memory sizes independently observed through the DSO1102 vendor DLL.
+
+### Vertical ranges
+
+The Hantek-family V/div table is:
+
+```text
+0 = 10 mV/div
+1 = 20 mV/div
+2 = 50 mV/div
+3 = 100 mV/div
+4 = 200 mV/div
+5 = 500 mV/div
+6 = 1 V/div
+7 = 2 V/div
+8 = 5 V/div
+```
+
+The DSO-1102 runtime trace independently verified codes 5, 6 and 7 as 500 mV/div, 1 V/div and 2 V/div, respectively.
+
+The remaining codes are therefore strongly corroborated family mappings, but remain marked inferred for the DSO-1102 until runtime-tested.
+
+### Time-base family
+
+The Hantek-family table includes:
+
+```text
+10 us, 20 us, 40 us,
+100 us, 200 us, 400 us,
+1 ms, 2 ms, 4 ms,
+10 ms, 20 ms, 40 ms,
+100 ms, 200 ms, 400 ms
+```
+
+The DSO-1102's verified 400 us / 1 ms / 2 ms / 4 ms profiles are therefore native members of the same discrete family progression.
+
+### Capture state 3
+
+The family driver distinguishes a DSO-2250-specific capture-ready state with numeric value 3.
+
+This independently corroborates the DSO-1102 runtime finding that state code 3 is the readable/ready state for the vendor-DLL acquisition path.
+
+### Separate 2250 control operations
+
+The 2250-family protocol has distinct operations for:
+
+```text
+set channels
+set trigger source
+set record length
+set sample rate
+set trigger position / buffer state
+```
+
+This aligns closely with the internal DSO1102 vendor-DLL exports already identified:
+
+```text
+_dsoSetChIn@8
+_dsoSetTrigIn@32
+_dsoSetRamLength@8
+_dsoSetSampleRate@8
+_dsoSetTriggerLength@16
+```
+
+This is strong evidence that the DSO1102 DLL's `dsoSetTriggerAndSampleRateNew` routine is an orchestration wrapper around the same family of lower-level state operations.
+
+### Channel mode hypothesis
+
+Older Hantek-family code represents the enabled-channel mode with three logical states:
+
+```text
+0 = CH1 only
+1 = CH2 only
+2 = both channels
+```
+
+The DSO-1102 trace of `_dsoSetChIn@8` observed:
+
+```text
+arg2 = 0 before CH2 was enabled
+arg2 = 2 after CH2 was enabled while CH1 remained enabled
+```
+
+This exactly matches the CH1-only -> both transition.
+
+The remaining value `1 = CH2 only` is still to be captured directly on the DSO-1102 before the mapping is promoted to a verified ABI.
+
+### Raw waveform scaling
+
+The family driver describes normal waveform samples as unsigned 8-bit values 0..255 and maps a channel's full ADC span across eight vertical divisions.
+
+This agrees with the DSO1102_Controller observation that normal decoded samples are byte-range ADC values expanded into UInt16 containers.
+
+Physical-voltage conversion in DSO1102_Controller should therefore eventually use the verified V/div setting plus per-range calibration/offset information, not a single global volts-per-count constant.
