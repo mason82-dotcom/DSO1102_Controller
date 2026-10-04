@@ -11,6 +11,7 @@ public sealed record DeviceInfo(
 public enum TriggerMode { Auto, Normal, Single }
 public enum TriggerSlope { Rising, Falling }
 public enum TriggerSource { Channel1, Channel2, External }
+public enum SampleDomain { Volts, AdcCounts }
 
 public sealed record DsoSettings
 {
@@ -33,4 +34,6 @@ public sealed record AcquisitionFrame(
     IReadOnlyList<double> Channel2)
 {
     public int SampleCount => Math.Min(Channel1.Count, Channel2.Count);
+    public SampleDomain SampleDomain { get; init; } = SampleDomain.Volts;
+    public bool IsAmplitudeCalibrated { get; init; } = true;
 }
