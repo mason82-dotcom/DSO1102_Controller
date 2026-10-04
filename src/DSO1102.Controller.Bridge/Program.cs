@@ -709,14 +709,22 @@ internal static class Program
 
         var lowMean = lowCluster.Average();
         var highMean = highCluster.Average();
+        var dutyCycleHigh = (double)highCluster.Length / adcSamples.Length;
+        var minorClusterFraction = Math.Min(dutyCycleHigh, 1.0 - dutyCycleHigh);
+
+        // Reject tiny secondary clusters caused by glitches/outliers. A real
+        // square-wave plateau must occupy a meaningful part of the record.
+        var detected = minorClusterFraction >= 0.05;
 
         return new
         {
-            detected = true,
+            detected,
+            confidence = detected ? "high" : "rejected_as_outlier_cluster",
             low = SummarizeCluster(lowCluster),
             high = SummarizeCluster(highCluster),
             separationCounts = highMean - lowMean,
-            dutyCycleHigh = (double)highCluster.Length / adcSamples.Length
+            dutyCycleHigh,
+            minorClusterFraction
         };
     }
 
