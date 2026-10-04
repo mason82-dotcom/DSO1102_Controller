@@ -534,6 +534,46 @@ internal static class Program
             };
         }
 
+        if (exportName.Equals("dsoSetFiltAndVoltageData", StringComparison.Ordinal))
+        {
+            var ch1Filter = (ushort)((Arg(2)?.Low16 ?? 0) & 1);
+            var ch2Filter = (ushort)((Arg(3)?.Low16 ?? 0) & 1);
+            var ch1Range = Arg(4)?.Low16 ?? 0;
+            var ch2Range = Arg(5)?.Low16 ?? 0;
+
+            static int GainSubcode(ushort range) => range switch
+            {
+                0 or 3 or 6 => 0,
+                1 or 4 or 7 => 1,
+                2 or 5 or 8 => 2,
+                _ => -1
+            };
+
+            var ch1Gain = GainSubcode(ch1Range);
+            var ch2Gain = GainSubcode(ch2Range);
+            int? packed = ch1Gain >= 0 && ch2Gain >= 0
+                ? ch1Gain |
+                  (ch2Gain << 2) |
+                  (ch2Filter << 4) |
+                  (ch1Filter << 5)
+                : null;
+
+            return new
+            {
+                deviceIndex = Arg(1)?.Low16,
+                ch1BandwidthFilter = ch1Filter != 0,
+                ch2BandwidthFilter = ch2Filter != 0,
+                ch1RangeCode = ch1Range,
+                ch1Range = RangeLabel(ch1Range),
+                ch1GainSubcode = ch1Gain >= 0 ? ch1Gain : null,
+                ch2RangeCode = ch2Range,
+                ch2Range = RangeLabel(ch2Range),
+                ch2GainSubcode = ch2Gain >= 0 ? ch2Gain : null,
+                packedControlByte = packed.HasValue ? $"0x{packed.Value:X2}" : null,
+                packedLayout = "bits0..1=CH1 gain, bits2..3=CH2 gain, bit4=CH2 filter, bit5=CH1 filter"
+            };
+        }
+
         if (exportName.Equals("dsoSetFilt", StringComparison.Ordinal))
         {
             var ch1 = (ushort)((Arg(2)?.Low16 ?? 0) & 1);
