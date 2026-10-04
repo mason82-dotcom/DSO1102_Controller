@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('voltage','offset','channel','trigger')]
+    [ValidateSet('voltage','offset','channel','trigger','enable')]
     [string]$Mode,
 
     [int]$MaxCalls = 16,
@@ -39,6 +39,13 @@ switch ($Mode) {
     'trigger' {
         $export = '_dsoSetTrigIn@32'
         $argumentCount = 8
+        $distinctPointerArg = 0
+        $distinctScalarArg = 0
+        $distinctLow16Signature = 1
+    }
+    'enable' {
+        $export = 'dsoSetFiltAndVoltageData'
+        $argumentCount = 5
         $distinctPointerArg = 0
         $distinctScalarArg = 0
         $distinctLow16Signature = 1
@@ -136,4 +143,23 @@ Do not change trigger level or slope during this first run.
 The tracer observes _dsoSetTrigIn@32 only. It never invokes the helper.
 Calls are deduplicated by the complete low-16 argument signature so recurring
 internal refresh calls do not consume the trace budget.
+#>
+
+
+<#
+Recommended UI channel-enable verification sequence for -Mode enable:
+  Use a normal/slow profile such as 1 ms/div.
+  Keep V/div, coupling, vertical position, trigger and timebase unchanged.
+  Start with CH1 enabled and CH2 disabled.
+  -> enable CH2
+  -> disable CH2
+  -> enable CH2
+  -> disable CH1
+  -> enable CH1
+
+This traces dsoSetFiltAndVoltageData, not the fast-sampling helper
+_dsoSetChIn@8. The five low-16 arguments are deduplicated as a complete
+signature. Static analysis shows args 4 and 5 are CH1/CH2 V/div range codes;
+args 2 and 3 are the two per-channel 0/1 state fields that the vendor UI
+toggles. Runtime tracing is used to prove polarity/channel ordering.
 #>
