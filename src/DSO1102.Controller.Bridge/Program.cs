@@ -85,14 +85,14 @@ internal static class Program
                 "capture-gnd" => Fail("capture-gnd v1 is disabled because it used an incorrect vendor ABI. Use capture-gnd-v2 after initializing the known profile in the original application."),
                 "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath, "capture-gnd-v2", groundReference: true),
                 "capture-raw" => CaptureGroundBaselineV2(dllPath, "capture-raw", groundReference: false),
-                "capture-400us" => CaptureGroundBaselineV2(dllPath, "capture-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", expectedSampleRateHz: 5_000_000),
-                "capture-1ms" => CaptureGroundBaselineV2(dllPath, "capture-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", expectedSampleRateHz: 5_000_000),
-                "capture-2ms" => CaptureGroundBaselineV2(dllPath, "capture-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", expectedSampleRateHz: 5_000_000),
-                "capture-4ms" => CaptureGroundBaselineV2(dllPath, "capture-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", expectedSampleRateHz: 5_000_000),
-                "self-init-400us" => CaptureGroundBaselineV2(dllPath, "self-init-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", expectedSampleRateHz: 5_000_000, selfInitializeTimeBase: true),
-                "self-init-1ms" => CaptureGroundBaselineV2(dllPath, "self-init-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", expectedSampleRateHz: 5_000_000, selfInitializeTimeBase: true),
-                "self-init-2ms" => CaptureGroundBaselineV2(dllPath, "self-init-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", expectedSampleRateHz: 5_000_000, selfInitializeTimeBase: true),
-                "self-init-4ms" => CaptureGroundBaselineV2(dllPath, "self-init-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", expectedSampleRateHz: 5_000_000, selfInitializeTimeBase: true),
+                "capture-400us" => CaptureGroundBaselineV2(dllPath, "capture-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", decodedOutputReferenceRateHz: 5_000_000),
+                "capture-1ms" => CaptureGroundBaselineV2(dllPath, "capture-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000),
+                "capture-2ms" => CaptureGroundBaselineV2(dllPath, "capture-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", decodedOutputReferenceRateHz: 5_000_000),
+                "capture-4ms" => CaptureGroundBaselineV2(dllPath, "capture-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", decodedOutputReferenceRateHz: 5_000_000),
+                "self-init-400us" => CaptureGroundBaselineV2(dllPath, "self-init-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
+                "self-init-1ms" => CaptureGroundBaselineV2(dllPath, "self-init-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
+                "self-init-2ms" => CaptureGroundBaselineV2(dllPath, "self-init-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
+                "self-init-4ms" => CaptureGroundBaselineV2(dllPath, "self-init-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
                 "exports" => CheckExports(dllPath),
                 _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, exports.")
             };
@@ -551,7 +551,7 @@ internal static class Program
         bool groundReference,
         ushort? timeBaseCode = null,
         string? timeBaseLabel = null,
-        double? expectedSampleRateHz = null,
+        double? decodedOutputReferenceRateHz = null,
         bool selfInitializeTimeBase = false)
     {
         using var library = VendorLibrary.Load(dllPath);
@@ -790,7 +790,9 @@ internal static class Program
                 setterWords = setterPrefix?.Take(23).ToArray(),
                 timeBaseCode,
                 timeBaseLabel,
-                expectedSampleRateHz,
+                decodedOutputReferenceRateHz,
+                decodedOutputRateMeaning = "Rate inferred from sample spacing in the vendor-decoded output array; not necessarily the physical ADC clock.",
+                hardwareSamplerateProgramming = DescribeHardwareSamplerateProgramming(timeBaseCode),
                 triggerSampleWords = tracedPrefix.Take(6).ToArray(),
                 calibrationA,
                 calibrationB,
@@ -839,6 +841,57 @@ internal static class Program
         });
 
         return waveformReadValid ? 0 : 2;
+    }
+
+    private static object? DescribeHardwareSamplerateProgramming(ushort? timeBaseCode)
+    {
+        if (!timeBaseCode.HasValue)
+            return null;
+
+        // Directly decoded from DSO1102USB.dll _dsoSetSampleRate@8 for the
+        // normal traced setter-state branch (config word[4] != 0).
+        //
+        // The 16-bit values are one's-complement downsampler words. Historical
+        // Hantek DSO-2250 protocol documentation defines:
+        //   divider = (~word & 0xffff) + 2
+        //
+        // The DSO-1102 command contains two such timing words. Their exact
+        // hardware roles in this DLL revision are not yet runtime-proven, so
+        // expose the raw words/dividers without pretending either one is the
+        // decoded output-array rate.
+        (ushort primary, ushort secondary)? words = timeBaseCode.Value switch
+        {
+            15 => (0xFFED, 0xFFF7),
+            16 => (0xFFD9, 0xFFED),
+            17 => (0xFF9D, 0xFFCF),
+            18 => (0xFF39, 0xFF9D),
+            _ => null
+        };
+
+        if (!words.HasValue)
+            return new
+            {
+                source = "DSO1102USB.dll _dsoSetSampleRate@8",
+                verifiedForThisProfile = false,
+                note = "Hardware timing words have not yet been promoted for this Time/DIV code."
+            };
+
+        static int Divider(ushort value) => ((~value) & 0xFFFF) + 2;
+
+        var pair = words.Value;
+        return new
+        {
+            source = "Direct static disassembly of DSO1102USB.dll _dsoSetSampleRate@8, normal config word[4] != 0 branch.",
+            verifiedForThisProfile = true,
+            commandByte = "0x0E",
+            flagsByteForTracedState = "0x0A",
+            primaryDownsamplerWord = $"0x{pair.primary:X4}",
+            primaryDivider = Divider(pair.primary),
+            secondaryDownsamplerWord = $"0x{pair.secondary:X4}",
+            secondaryDivider = Divider(pair.secondary),
+            formula = "divider = (~word & 0xFFFF) + 2",
+            note = "The two hardware timing fields change with Time/DIV even when the vendor-decoded output array remains near 5 MSamples/s. Their exact physical clock roles remain to be runtime-correlated."
+        };
     }
 
     private static object SummarizeFullBuffer(ushort[] buffer)
@@ -1210,6 +1263,7 @@ internal static class Program
             ifSignalIs1kHz = new
             {
                 referenceFrequencyHz = 1000,
+                rateDomain = "vendor-decoded output sample grid; this is not proof of the physical ADC sample clock",
                 estimatedSampleRateHz = estimatedSampleRateAt1kHz,
                 estimatedSampleIntervalNs,
                 estimatedRecordDurationMs
