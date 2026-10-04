@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('voltage','offset','channel','trigger','enable')]
+    [ValidateSet('voltage','offset','channel','trigger','filter')]
     [string]$Mode,
 
     [int]$MaxCalls = 16,
@@ -43,9 +43,9 @@ switch ($Mode) {
         $distinctScalarArg = 0
         $distinctLow16Signature = 1
     }
-    'enable' {
-        $export = 'dsoSetFiltAndVoltageData'
-        $argumentCount = 5
+    'filter' {
+        $export = 'dsoSetFilt'
+        $argumentCount = 4
         $distinctPointerArg = 0
         $distinctScalarArg = 0
         $distinctLow16Signature = 1
@@ -147,19 +147,21 @@ internal refresh calls do not consume the trace budget.
 
 
 <#
-Recommended UI channel-enable verification sequence for -Mode enable:
-  Use a normal/slow profile such as 1 ms/div.
-  Keep V/div, coupling, vertical position, trigger and timebase unchanged.
-  Start with CH1 enabled and CH2 disabled.
-  -> enable CH2
-  -> disable CH2
-  -> enable CH2
-  -> disable CH1
-  -> enable CH1
+Recommended filter verification sequence for -Mode filter:
+  Keep channel visibility, V/div, coupling, positions and timebase unchanged.
+  Start with CH1 BandWidth Limit OFF, CH2 BandWidth Limit OFF,
+  Trigger HF Rejection OFF.
+  -> CH1 BandWidth Limit ON
+  -> CH1 BandWidth Limit OFF
+  -> CH2 BandWidth Limit ON
+  -> CH2 BandWidth Limit OFF
+  -> Trigger HF Rejection ON
+  -> Trigger HF Rejection OFF
 
-This traces dsoSetFiltAndVoltageData, not the fast-sampling helper
-_dsoSetChIn@8. The five low-16 arguments are deduplicated as a complete
-signature. Static analysis shows args 4 and 5 are CH1/CH2 V/div range codes;
-args 2 and 3 are the two per-channel 0/1 state fields that the vendor UI
-toggles. Runtime tracing is used to prove polarity/channel ordering.
+Static call-site analysis predicts:
+  arg2 = CH1 BandWidth Limit
+  arg3 = CH2 BandWidth Limit
+  arg4 = Trigger HF Rejection
+
+The trace is observational and deduplicated by the complete low-16 signature.
 #>
