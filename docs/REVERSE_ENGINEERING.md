@@ -2158,3 +2158,61 @@ The DSO-1102 user manual specifies:
 - AC/DC/GND coupling.
 
 These published limits are consistent with the reconstructed 38-entry Time/DIV table and nine-step vertical-range table, but do not by themselves define the DLL's internal downsampler words.
+
+
+## Trigger position and record-length state
+
+Direct analysis of `_dsoSetTriggerLength@16` and `_dsoSetRamLength@8` resolves two more words in the trigger/sample state used by `dsoSetTriggerAndSampleRateNew`.
+
+### word[3] = trigger position percent
+
+`dsoSetTriggerAndSampleRateNew` passes:
+
+```text
+config.word[4] -> _dsoSetTriggerLength arg2
+config.word[3] -> _dsoSetTriggerLength arg3
+config.word[2] -> _dsoSetTriggerLength arg4
+```
+
+`_dsoSetTriggerLength@16` treats arg3 as a 0..100 percentage and explicitly calculates both `arg3` and `100-arg3` before generating the pre/post-trigger position command (`0x0F`).
+
+Therefore the repeatedly observed:
+
+```text
+word[3] = 50
+```
+
+is a 50% trigger-position setting.
+
+### word[4] = record/RAM-length state class
+
+`_dsoSetRamLength@8` tests only whether its second argument is zero:
+
+```text
+arg2 == 0 -> hardware RAM/record mode 1
+arg2 != 0 -> hardware RAM/record mode 2
+```
+
+The normal traced setter state uses `word[4] = 5`, while the normal `dsoGetChannelData` read state uses `word[4] = 6`.
+
+Both values are non-zero and therefore select the **same low-level hardware RAM/record mode 2**.
+
+`_dsoSetSampleRate@8` and `_dsoSetTriggerLength@16` likewise distinguish this field primarily by zero versus non-zero in the characterized paths.
+
+Consequently, values 5 and 6 must not be described as different hardware memory depths. They are higher-level vendor-state values that collapse to the same deep-memory hardware class in these low-level helpers.
+
+### Current state-prefix interpretation
+
+For the traced read profiles:
+
+```text
+word[0] = raw trigger-input selector
+word[1] = hardware channel-mode state used directly only for Time/DIV codes 0..9
+word[2] = Time/DIV code
+word[3] = trigger position percent
+word[4] = record/RAM-length state; zero/non-zero selects low-level mode 1/2
+word[5] = unresolved
+word[6] = includes a bit consumed by the samplerate command
+```
+
+The bridge now emits these decoded state fields in capture diagnostics.
