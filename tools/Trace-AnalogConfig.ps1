@@ -18,14 +18,17 @@ switch ($Mode) {
     'voltage' {
         $export = 'dsoSetVoltageAndCoupling'
         $argumentCount = 6
+        $distinctScalarArg = 0
     }
     'offset' {
         $export = 'dsoSetOffset'
         $argumentCount = 6
+        $distinctScalarArg = 0
     }
     'channel' {
         $export = '_dsoSetChIn@8'
         $argumentCount = 2
+        $distinctScalarArg = 2
     }
     default {
         throw "Unsupported mode: $Mode"
@@ -39,6 +42,7 @@ switch ($Mode) {
   -IdleTimeoutMs $IdleTimeoutMs `
   -TotalTimeoutMs $TotalTimeoutMs `
   -DistinctPointerArg 0 `
+  -DistinctScalarArg $distinctScalarArg `
   -ExePath $ExePath `
   -DllPath $DllPath
 
