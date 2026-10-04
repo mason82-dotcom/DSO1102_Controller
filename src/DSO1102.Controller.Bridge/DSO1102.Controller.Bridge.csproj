@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <AssemblyName>DSO1102_Bridge_x86</AssemblyName>
+    <RootNamespace>DSO1102.Controller.Bridge</RootNamespace>
+  </PropertyGroup>
+</Project>
