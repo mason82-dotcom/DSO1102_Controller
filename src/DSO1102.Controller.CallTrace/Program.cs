@@ -565,10 +565,10 @@ internal static class Program
                 ch2BandwidthFilter = ch2Filter != 0,
                 ch1RangeCode = ch1Range,
                 ch1Range = RangeLabel(ch1Range),
-                ch1GainSubcode = ch1Gain >= 0 ? ch1Gain : null,
+                ch1GainSubcode = ch1Gain >= 0 ? (int?)ch1Gain : null,
                 ch2RangeCode = ch2Range,
                 ch2Range = RangeLabel(ch2Range),
-                ch2GainSubcode = ch2Gain >= 0 ? ch2Gain : null,
+                ch2GainSubcode = ch2Gain >= 0 ? (int?)ch2Gain : null,
                 packedControlByte = packed.HasValue ? $"0x{packed.Value:X2}" : null,
                 packedLayout = "bits0..1=CH1 gain, bits2..3=CH2 gain, bit4=CH2 filter, bit5=CH1 filter"
             };
