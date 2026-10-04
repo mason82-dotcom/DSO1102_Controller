@@ -596,6 +596,15 @@ internal static class Program
 
         var a = bufferA.Take(verifiedSampleCount).ToArray();
         var b = bufferB.Take(verifiedSampleCount).ToArray();
+
+        // The vendor DLL has mode-dependent larger-memory paths. Do not assume
+        // the historical 0x2800 analysis window is the complete acquisition.
+        // Buffers are zero-initialized, while real decoded CH1/CH2 data for the
+        // current test setup is non-zero. Scanning the whole guard allocation
+        // therefore gives a conservative estimate of how far the vendor call
+        // actually populated each output buffer.
+        var writeExtentA = SummarizeBufferWriteExtent(bufferA, verifiedSampleCount);
+        var writeExtentB = SummarizeBufferWriteExtent(bufferB, verifiedSampleCount);
         var allZeroA = a.All(x => x == 0);
         var allZeroB = b.All(x => x == 0);
 
@@ -652,8 +661,11 @@ internal static class Program
                 stateName = CaptureStateName(stateCode),
                 triggerValue,
                 vendorReadResult = readResult,
-                sampleCountPerBuffer = verifiedSampleCount,
-                sampleCountSource = "Original application call-site branch for the traced profile."
+                analysisWindowSamplesPerBuffer = verifiedSampleCount,
+                analysisWindowSource = "0x2800 branch previously verified in the original application.",
+                guardBufferSamplesPerChannel = guardBufferSamples,
+                bufferWriteExtentA = writeExtentA,
+                bufferWriteExtentB = writeExtentB
             },
             bufferA = SummarizeSamples(a),
             bufferB = SummarizeSamples(b),
@@ -682,6 +694,44 @@ internal static class Program
         });
 
         return waveformReadValid ? 0 : 2;
+    }
+
+    private static object SummarizeBufferWriteExtent(ushort[] buffer, int chunkSize)
+    {
+        var lastNonZeroIndex = -1;
+        long nonZeroCount = 0;
+
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            if (buffer[i] == 0)
+                continue;
+
+            nonZeroCount++;
+            lastNonZeroIndex = i;
+        }
+
+        var chunkNonZeroCounts = buffer
+            .Select((value, index) => new { value, index })
+            .GroupBy(x => x.index / chunkSize)
+            .Select(g => new
+            {
+                chunk = g.Key,
+                startIndex = g.Key * chunkSize,
+                endIndexExclusive = Math.Min(buffer.Length, (g.Key + 1) * chunkSize),
+                nonZeroCount = g.Count(x => x.value != 0)
+            })
+            .Where(x => x.nonZeroCount > 0)
+            .Take(64)
+            .ToArray();
+
+        return new
+        {
+            lastNonZeroIndex,
+            populatedPrefixEstimate = lastNonZeroIndex >= 0 ? lastNonZeroIndex + 1 : 0,
+            totalNonZeroValues = nonZeroCount,
+            chunkSize,
+            nonZeroChunks = chunkNonZeroCounts
+        };
     }
 
     private static object AnalyzeTwoPlateaus(ushort[] adcSamples)
