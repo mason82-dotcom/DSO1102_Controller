@@ -107,20 +107,27 @@ public partial class MainWindow : Window
             .OrderByDescending(x => x.Amplitude)
             .FirstOrDefault();
 
-        Ch1MeasurementsText.Text = FormatMeasurements(ch1);
-        Ch2MeasurementsText.Text = FormatMeasurements(ch2);
-        FftText.Text = peak is null ? "—" : $"Peak {FormatFrequency(peak.FrequencyHz)}\nAmp  {peak.Amplitude:F3} V";
-        StatusText.Text = $"Capture {_lastFrame.Timestamp:HH:mm:ss.fff} — {_lastFrame.SampleCount} Samples";
+        Ch1MeasurementsText.Text = FormatMeasurements(ch1, _lastFrame.SampleDomain);
+        Ch2MeasurementsText.Text = FormatMeasurements(ch2, _lastFrame.SampleDomain);
+        var amplitudeUnit = _lastFrame.SampleDomain == SampleDomain.Volts ? "V" : "ADC";
+        FftText.Text = peak is null ? "—" : $"Peak {FormatFrequency(peak.FrequencyHz)}\nAmp  {peak.Amplitude:F3} {amplitudeUnit}";
+        var calibrationState = _lastFrame.IsAmplitudeCalibrated ? "kalibriert" : "unkalibrierte ADC-Domain";
+        StatusText.Text = $"Capture {_lastFrame.Timestamp:HH:mm:ss.fff} — {_lastFrame.SampleCount} Samples — {calibrationState}";
         DrawScope();
     }
 
-    private static string FormatMeasurements(SignalMeasurements m) =>
-        $"Min  {m.Minimum,8:F3} V\n" +
-        $"Max  {m.Maximum,8:F3} V\n" +
-        $"Vpp  {m.PeakToPeak,8:F3} V\n" +
-        $"Mean {m.Mean,8:F3} V\n" +
-        $"RMS  {m.Rms,8:F3} V\n" +
-        $"Freq {FormatFrequency(m.FrequencyHz),8}";
+    private static string FormatMeasurements(SignalMeasurements m, SampleDomain domain)
+    {
+        var unit = domain == SampleDomain.Volts ? "V" : "ADC";
+
+        return
+            $"Min  {m.Minimum,8:F3} {unit}\n" +
+            $"Max  {m.Maximum,8:F3} {unit}\n" +
+            $"Vpp  {m.PeakToPeak,8:F3} {unit}\n" +
+            $"Mean {m.Mean,8:F3} {unit}\n" +
+            $"RMS  {m.Rms,8:F3} {unit}\n" +
+            $"Freq {FormatFrequency(m.FrequencyHz),8}";
+    }
 
     private static string FormatFrequency(double hz) =>
         hz >= 1_000_000 ? $"{hz / 1_000_000:F3} MHz" :
