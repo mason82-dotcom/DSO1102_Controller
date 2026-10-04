@@ -1096,3 +1096,62 @@ self-init-4ms   -> code 18
 ```
 
 These commands still do not constitute complete cold device initialization: analog voltage range/coupling, offset and filter state are not yet set independently by the bridge.
+
+
+## Voltage/div and coupling runtime mapping
+
+A controlled runtime trace of `dsoSetVoltageAndCoupling` used this CH1 UI sequence while leaving CH2 unchanged:
+
+```text
+CH1 DC, 1 V/div
+-> CH1 DC, 500 mV/div
+-> CH1 DC, 2 V/div
+-> CH1 AC, 2 V/div
+-> CH1 DC, 2 V/div
+-> CH1 DC, 1 V/div
+```
+
+Eight calls were observed. The first three were identical initialization/refresh calls:
+
+```text
+arg2 = 6
+arg3 = 6
+arg4 = 0
+arg5 = 1
+```
+
+The subsequent five calls exactly tracked the requested UI transitions:
+
+```text
+500 mV/div, DC -> arg2=5, arg3=6, arg4=0, arg5=1
+2 V/div,   DC -> arg2=7, arg3=6, arg4=0, arg5=1
+2 V/div,   AC -> arg2=7, arg3=6, arg4=1, arg5=1
+2 V/div,   DC -> arg2=7, arg3=6, arg4=0, arg5=1
+1 V/div,   DC -> arg2=6, arg3=6, arg4=0, arg5=1
+```
+
+Therefore, for CH1:
+
+```text
+arg2 = CH1 vertical range code
+  5 = 500 mV/div
+  6 = 1 V/div
+  7 = 2 V/div
+
+arg4 = CH1 coupling
+  0 = DC
+  1 = AC
+```
+
+Because CH2 was deliberately not changed in this run:
+
+```text
+arg3 = CH2 vertical range state (observed constant 6)
+arg5 = CH2 coupling state (observed constant 1)
+```
+
+The exact UI meaning of CH2's constant values must be confirmed by a dedicated CH2 trace rather than inferred.
+
+Arguments 1 and 6 carried varying non-zero upper 16 bits while their low 16 bits remained zero. As with other vendor calls, those upper bits are treated as caller register/stack residue until a runtime trace proves otherwise.
+
+All calls returned a low-word success value of 1 (`ReturnEax ...0001`).
