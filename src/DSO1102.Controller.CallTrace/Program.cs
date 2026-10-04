@@ -44,6 +44,9 @@ internal static class Program
             var distinctScalarArg = int.TryParse(GetArg(args, "--distinct-scalar-arg"), out var parsedDistinctScalarArg)
                 ? parsedDistinctScalarArg
                 : 0;
+            var distinctLow16Signature = int.TryParse(GetArg(args, "--distinct-low16-signature"), out var parsedDistinctLow16Signature)
+                ? parsedDistinctLow16Signature != 0
+                : false;
 
             if (!File.Exists(exePath))
                 throw new FileNotFoundException("Vendor application not found.", exePath);
@@ -61,14 +64,18 @@ internal static class Program
                 throw new ArgumentOutOfRangeException(nameof(distinctPointerArg), "Distinct pointer argument must be 0..16.");
             if (distinctScalarArg is < 0 or > 16)
                 throw new ArgumentOutOfRangeException(nameof(distinctScalarArg), "Distinct scalar argument must be 0..16.");
-            if (distinctPointerArg > 0 && distinctScalarArg > 0)
-                throw new ArgumentException("Use either --distinct-pointer-arg or --distinct-scalar-arg, not both.");
+            var distinctFilterCount =
+                (distinctPointerArg > 0 ? 1 : 0) +
+                (distinctScalarArg > 0 ? 1 : 0) +
+                (distinctLow16Signature ? 1 : 0);
+            if (distinctFilterCount > 1)
+                throw new ArgumentException("Use only one distinct-call filter at a time.");
 
             var exportRva = PeExports.GetExportRva(dllPath, exportName);
             if (exportRva == 0)
                 throw new EntryPointNotFoundException($"Export '{exportName}' not found in '{dllPath}'.");
 
-            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs, distinctPointerArg, distinctScalarArg);
+            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs, distinctPointerArg, distinctScalarArg, distinctLow16Signature);
             Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             return result.Calls.Count > 0 ? 0 : 2;
         }
@@ -93,7 +100,8 @@ internal static class Program
         int idleTimeoutMs,
         int totalTimeoutMs,
         int distinctPointerArg,
-        int distinctScalarArg)
+        int distinctScalarArg,
+        bool distinctLow16Signature)
     {
         var startup = new STARTUPINFO
         {
@@ -134,6 +142,7 @@ internal static class Program
         var calls = new List<CallTrace>();
         string? lastDistinctPointerPreview = null;
         ushort? lastDistinctScalarValue = null;
+        string? lastDistinctLow16Signature = null;
         var observedCallCount = 0;
         var suppressedDuplicateCount = 0;
 
@@ -325,6 +334,24 @@ internal static class Program
                                         lastDistinctScalarValue = currentValue.Value;
                                     }
                                 }
+                                else if (distinctLow16Signature)
+                                {
+                                    var currentSignature = string.Join(
+                                        ",",
+                                        snapshots
+                                            .OrderBy(x => x.Index)
+                                            .Select(x => x.Low16.ToString("X4")));
+
+                                    if (currentSignature == lastDistinctLow16Signature)
+                                    {
+                                        recordCall = false;
+                                        suppressedDuplicateCount++;
+                                    }
+                                    else
+                                    {
+                                        lastDistinctLow16Signature = currentSignature;
+                                    }
+                                }
 
                                 if (recordCall)
                                 {
@@ -429,6 +456,7 @@ internal static class Program
             SuppressedDuplicateCount = suppressedDuplicateCount,
             DistinctPointerArg = distinctPointerArg,
             DistinctScalarArg = distinctScalarArg,
+            DistinctLow16Signature = distinctLow16Signature,
             IdleTimeoutMs = idleTimeoutMs,
             TotalTimeoutMs = totalTimeoutMs,
             Calls = calls,
@@ -714,6 +742,7 @@ internal static class Program
         public int SuppressedDuplicateCount { get; init; }
         public int DistinctPointerArg { get; init; }
         public int DistinctScalarArg { get; init; }
+        public bool DistinctLow16Signature { get; init; }
         public int IdleTimeoutMs { get; init; }
         public int TotalTimeoutMs { get; init; }
         public List<CallTrace> Calls { get; init; } = [];
