@@ -1271,3 +1271,72 @@ The 16-call trace budget was consumed by repeated internal calls before the requ
 Do not expose `_dsoSetChIn@8` as a bridge control until its second argument semantics are independently proven.
 
 The actual channel enable/disable state remains unresolved and must be located at the original application's state/call-site level rather than inferred from this internal helper.
+
+
+## External corroboration from NI / LabVIEW community
+
+The following NI Community findings are not treated as protocol truth for the DSO-1102 by themselves, but they materially corroborate the reverse-engineered architecture and Hantek-family behavior observed in this project.
+
+### Voltcraft / Hantek OEM and direct-DLL architecture
+
+An NI Community thread for the Voltcraft DSO-2150 identifies it as a Hantek OEM product. An NI employee inspected the manufacturer's LabVIEW VI and stated that it calls the vendor `dso_2150usb.dll` directly rather than using VISA.
+
+This strongly supports the DSO1102_Controller architecture of preserving the manufacturer's USB driver and calling the vendor DLL instead of replacing the device stack with VISA/WinUSB.
+
+### Shared Hantek DSO-2000 family SDK lineage
+
+An older NI Community post advertises second-development libraries/examples for Hantek DSO-2090 / DSO-2150 / DSO-2250 USB across LabVIEW, VB, VC, Delphi and C++Builder.
+
+This is consistent with the DSO-1102 vendor DLL carrying DSO2250USB metadata and sharing export names / behavior with older Hantek DSO-2000-family SDKs. The metadata should therefore be treated as evidence of shared code lineage, not as proof that the physical DSO-1102 is a DSO-2250.
+
+### dsoGetChannelData output buffers must be preallocated
+
+NI Community analysis of the manufacturer's DSO-2090 LabVIEW VI specifically identifies `dsoGetChannelData()` as receiving two output arrays. The inspected VI had hidden arrays preallocated to 30,000 elements each.
+
+The same discussion notes that external C code cannot resize LabVIEW arrays and the caller must allocate sufficient output space before the DLL call.
+
+This corroborates the bridge design that pins caller-owned waveform buffers before invoking `dsoGetChannelData`.
+
+### Calling convention and buffer errors
+
+A Hantek DSO-2090 thread around LabVIEW error 1097 highlights two relevant failure classes:
+- mismatch between stdcall and C calling convention;
+- insufficiently allocated output buffers.
+
+The DSO1102_Controller runtime/static work has independently confirmed stdcall-style stack cleanup for the relevant vendor exports, so the NI discussion provides external corroboration rather than the primary ABI source.
+
+### 32-bit vendor DLL requires a 32-bit caller
+
+NI Community guidance is explicit that a 32-bit process cannot directly call a 64-bit DLL and vice versa. A recommended workaround is a matching-bitness helper process communicating with the main application.
+
+This directly matches the project's x86 bridge + x64 controller architecture.
+
+### Hantek waveform data is exposed as 8-bit ADC-like values
+
+A later Hantek LabVIEW thread reports waveform levels in the 0..255 range and explicitly associates this with an 8-bit oscilloscope. The same post reports audible relay switching as vertical-range codes change.
+
+This is consistent with DSO1102_Controller observations that normal decoded waveform samples are byte-range values expanded to UInt16 and that vertical range selection drives analog relay/range state.
+
+### Caution: arbitrary waveform buffer sizes are unsafe
+
+A Hantek DSO3064 LabVIEW user reported memory corruption / hangs when simply increasing the waveform buffer beyond the size expected by that SDK path.
+
+This supports the project's conservative strategy:
+- use runtime-observed buffer behavior;
+- allocate guarded buffers;
+- validate decoded sample ranges;
+- do not infer safe record lengths merely from available memory.
+
+### Project impact
+
+External NI evidence therefore reinforces the following current design decisions:
+
+```text
+1. Keep the original Hantek/Voltcraft driver stack.
+2. Use the vendor DLL rather than VISA for the legacy USB DSO family.
+3. Keep the vendor DLL inside a 32-bit bridge process.
+4. Treat dsoGetChannelData output memory as caller-owned and preallocated.
+5. Preserve stdcall ABI handling.
+6. Treat normal waveform data as 8-bit ADC samples expanded into larger host types.
+7. Do not guess record size or blindly enlarge buffers without runtime verification.
+```
