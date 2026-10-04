@@ -4,6 +4,7 @@ param(
     [int]$MaxCalls = 8,
     [int]$IdleTimeoutMs = 30000,
     [int]$TotalTimeoutMs = 180000,
+    [int]$DistinctPointerArg = 3,
     [string]$ExePath = 'C:\Program Files (x86)\DSO-1102 USB\DSO-1102 USB.exe',
     [string]$DllPath = 'C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll'
 )
@@ -27,6 +28,7 @@ if ($Mode -eq 'new') {
   -MaxCalls $MaxCalls `
   -IdleTimeoutMs $IdleTimeoutMs `
   -TotalTimeoutMs $TotalTimeoutMs `
+  -DistinctPointerArg $DistinctPointerArg `
   -ExePath $ExePath `
   -DllPath $DllPath
 
