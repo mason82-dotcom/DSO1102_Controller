@@ -1392,3 +1392,92 @@ SecondDesignDSO-2100USB_Ver5.0.0.1_English.zip
 An NI contributor who opened the archive reported that the function declarations are contained in `SecondDesignManual.txt`.
 
 This is potentially the closest historical SDK documentation found so far. The attachment itself is not currently retrievable through the indexed forum page, so no declaration from it is treated as evidence until the original archive/manual can be recovered.
+
+
+## External DSO-2100 control-state structure
+
+An old FreeBASIC implementation for the Voltcraft/Hantek DSO-2100 exposes a reconstructed packed `HARDWARE_CONTROL_DATA` structure used with the older `port_init` API.
+
+Relevant fields:
+
+```text
+time_d_va       s32
+tri_in_sel      s16   trigger slope/off state
+ch1_div         s16
+ch1_in_sel      s16   0=DC, 1=AC (when not grounded)
+ch2_div         s16
+ch2_in_sel      s16   0=DC, 1=AC (when not grounded)
+ram_rw_mode     s16
+ram_copy_mode   s16   time-base mode
+ram_copy_delay  s16
+ho_mode         s16   0=Auto, 1=Normal, 2=Single
+ho_mode1        s16
+CH              s16   0=CH1+CH2, 1=CH1, 2=CH2
+TRI_12E         s16   1=CH1, 2=CH2, 3=EXT, 4=ALT
+Ch1_To_Gnd      s16
+Ch2_To_Gnd      s16
+```
+
+This older API is not ABI-compatible with the DSO-1102 DLL and must not be copied directly. However, it provides strong family-level evidence for three concepts relevant to the current unresolved state:
+
+1. channel visibility/selection is a separate state from AC/DC coupling;
+2. GND is a separate state from AC/DC;
+3. trigger source is a separate channel selector.
+
+This supports keeping DSO-1102 channel-enable and GND semantics separate from the already verified `dsoSetVoltageAndCoupling` ABI.
+
+### Vertical range lineage
+
+The DSO-2100 wrapper maps its seven range modes as:
+
+```text
+0 = 50 mV/div
+1 = 100 mV/div
+2 = 200 mV/div
+3 = 500 mV/div
+4 = 1 V/div
+5 = 2 V/div
+6 = 5 V/div
+```
+
+The later DSO-2000 family datasheet documents nine gain steps from 10 mV/div through 5 V/div.
+
+The DSO-1102 runtime trace has independently verified:
+
+```text
+5 = 500 mV/div
+6 = 1 V/div
+7 = 2 V/div
+```
+
+These observations are exactly consistent with a nine-step sequence:
+
+```text
+0 = 10 mV/div   [inferred]
+1 = 20 mV/div   [inferred]
+2 = 50 mV/div   [inferred]
+3 = 100 mV/div  [inferred]
+4 = 200 mV/div  [inferred]
+5 = 500 mV/div  [runtime verified]
+6 = 1 V/div     [runtime verified]
+7 = 2 V/div     [runtime verified]
+8 = 5 V/div     [inferred]
+```
+
+Only codes 5, 6 and 7 are currently promoted as DSO-1102 protocol facts. The remaining entries are a strong family-based hypothesis requiring direct runtime tracing.
+
+### DSO-2100 time-base lineage
+
+The older wrapper exposes 35 time-base modes and a separate `ram_copy_mode`. Its mapping includes:
+
+```text
+mode 15 = 0.2 ms
+mode 16 = 0.5 ms
+mode 17 = 1 ms
+mode 18 = 2 ms
+mode 19 = 5 ms
+```
+
+The DSO-1102 uses different verified codes (15=400 us, 16=1 ms, 17=2 ms, 18=4 ms), so exact numeric time-base codes are model/API-generation specific and must not be transferred across families.
+
+The useful family-level concept is that horizontal scale is represented by a discrete mode field, while capture/record behavior can be controlled by additional memory-related fields.
