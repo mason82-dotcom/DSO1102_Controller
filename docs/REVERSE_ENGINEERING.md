@@ -208,3 +208,14 @@ Therefore state code `3` is treated as the DSO-1102 capture-ready/readable state
 For the small-memory path, disassembly of `dsoGetChannelData` shows an output size of `0x2800` samples per decoded buffer (10,240 samples). The large-memory path expands to 524,288 samples.
 
 The experimental `capture-gnd` bridge command reads the already configured capture without invoking any vendor `Set*`, calibration, flash, or device-ID write function. It emits neutral buffer A/B statistics so CH1 can be identified empirically by tying CH1 to GND.
+
+
+## Waveform-read validation result
+
+A real-hardware `capture-gnd` run reached DSO-1102 state `3` and returned a stable trigger value, but both caller-provided waveform buffers remained entirely zero. The vendor function returned nonzero, so that return value alone cannot be used as proof that waveform data was decoded into the supplied buffers.
+
+The bridge now treats an unchanged/all-zero pair of buffers as an invalid waveform read and does not infer channel mapping from it.
+
+An older manufacturer LabVIEW example for the related DSO-2090 family used two preallocated output arrays containing 30,000 elements each for `dsoGetChannelData`. This is useful ABI evidence but does not prove the DSO-1102 sample count. Accordingly, the previous 10,240-sample assumption is no longer treated as verified for the DSO-1102 DLL.
+
+Further hardware reads are gated on reconstructing the remaining auxiliary arguments of the eight-argument DSO-1102 `dsoGetChannelData` export.
