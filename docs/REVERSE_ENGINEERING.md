@@ -126,3 +126,24 @@ Disassembly shows stack-cleanup returns consistent with stdcall.
 - `dsoCaptureStart`, `dsoTriggerEnabled`, `dsoForceTrigger`: one slot (`ret 0x04`).
 
 The x64 desktop app cannot load this x86 DLL in-process. The repository therefore uses a separate x86 bridge process for the vendor API.
+
+
+## Real hardware verification
+
+The x86 bridge has been verified against a connected DSO-1102 on Windows:
+
+- `dsoSearchDevice(0)` returned present.
+- indices 1..3 returned not present.
+- `dsoGetFPGAVersion(0)` returned raw value `12001`.
+- the full path x86 bridge -> `DSO1102USB.dll` -> `DSO1102AMD642.SYS` -> hardware is therefore operational.
+
+## Read-only information calls
+
+Further disassembly confirms these read paths:
+
+- `dsoGetDeviceID(deviceIndex, ushort* value)`: two stack arguments, writes one 16-bit value.
+- `dsoGetDeviceAddress(deviceIndex, ushort* value)`: two stack arguments, writes one 16-bit value.
+- `dsoGetChannelLevel(deviceIndex, ushort* values, ushort count)`: three stack arguments. The vendor application calls it with count `0x58` (88 words).
+- `dsoGetCaptureState(deviceIndex, uint32* value)`: two stack arguments. The response status is returned separately and bytes 2..3 are combined into the output value.
+
+The bridge exposes these through the `info` command without invoking configuration-changing functions.
