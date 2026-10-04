@@ -72,8 +72,8 @@ internal static class Program
                 "arm" => ArmAndObserve(dllPath, forceTrigger: false),
                 "force" => ArmAndObserve(dllPath, forceTrigger: true),
                 "capture-gnd" => Fail("capture-gnd v1 is disabled because it used an incorrect vendor ABI. Use capture-gnd-v2 after initializing the known profile in the original application."),
-                "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath),
-                "capture-raw" => CaptureGroundBaselineV2(dllPath),
+                "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath, "capture-gnd-v2", groundReference: true),
+                "capture-raw" => CaptureGroundBaselineV2(dllPath, "capture-raw", groundReference: false),
                 "exports" => CheckExports(dllPath),
                 _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, exports.")
             };
@@ -456,7 +456,7 @@ internal static class Program
         return 0;
     }
 
-    private static int CaptureGroundBaselineV2(string dllPath)
+    private static int CaptureGroundBaselineV2(string dllPath, string commandName, bool groundReference)
     {
         using var library = VendorLibrary.Load(dllPath);
 
@@ -584,7 +584,7 @@ internal static class Program
         WriteJson(new
         {
             ok = waveformReadValid,
-            command = "capture-gnd-v2",
+            command = commandName,
             deviceIndex,
             abi = new
             {
@@ -624,7 +624,9 @@ internal static class Program
                 allZeroA,
                 allZeroB,
                 channelMapping = waveformReadValid
-                    ? "Buffer A is the leading CH1 candidate: with CH1 tied to GND it is markedly flatter than buffer B. Final mapping will be confirmed with a driven signal."
+                    ? groundReference
+                        ? "Buffer A is the leading CH1 candidate: with CH1 tied to GND it is markedly flatter than buffer B. Final mapping will be confirmed with a driven signal."
+                        : "Generic raw capture: no channel mapping inference is made unless the physical input condition is known."
                     : "Not evaluated because the vendor call did not populate either buffer.",
                 physicalVoltageConversionApplied = false,
                 vendorCalibrationStateUsed = true
