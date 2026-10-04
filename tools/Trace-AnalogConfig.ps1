@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('voltage','offset','channel','trigger','filter')]
+    [ValidateSet('voltage','offset','channel','trigger','filter','filtervoltage')]
     [string]$Mode,
 
     [int]$MaxCalls = 16,
@@ -46,6 +46,13 @@ switch ($Mode) {
     'filter' {
         $export = 'dsoSetFilt'
         $argumentCount = 4
+        $distinctPointerArg = 0
+        $distinctScalarArg = 0
+        $distinctLow16Signature = 1
+    }
+    'filtervoltage' {
+        $export = 'dsoSetFiltAndVoltageData'
+        $argumentCount = 5
         $distinctPointerArg = 0
         $distinctScalarArg = 0
         $distinctLow16Signature = 1
@@ -164,4 +171,25 @@ Static call-site analysis predicts:
   arg4 = Trigger HF Rejection
 
 The trace is observational and deduplicated by the complete low-16 signature.
+#>
+
+
+<#
+Recommended combined filter/voltage verification sequence for -Mode filtervoltage:
+  Keep CH1/CH2 visible, DC coupled, timebase and trigger unchanged.
+  Start CH1=1 V/div, CH2=1 V/div, both bandwidth filters OFF.
+  -> CH1 bandwidth filter ON
+  -> CH1 bandwidth filter OFF
+  -> CH1 500 mV/div
+  -> CH1 2 V/div
+  -> CH1 1 V/div
+
+Static DSO1102USB.dll analysis proves:
+  arg1 = device index
+  arg2 = CH1 bandwidth/filter flag
+  arg3 = CH2 bandwidth/filter flag
+  arg4 = CH1 V/div code
+  arg5 = CH2 V/div code
+
+The call is observational only.
 #>
