@@ -194,6 +194,12 @@ internal static class Program
                                 CloseHandle(thread);
                             }
                         }
+                        else if (exception.ExceptionRecord.ExceptionCode == ExceptionBreakpoint)
+                        {
+                            // Windows raises an initial breakpoint for every debugged process.
+                            // It is not an application fault and must be consumed by the debugger.
+                            continueStatus = DbgContinue;
+                        }
                         else
                         {
                             continueStatus = DbgExceptionNotHandled;
@@ -445,7 +451,7 @@ internal static class Program
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct FLOATING_SAVE_AREA
+    private unsafe struct FLOATING_SAVE_AREA
     {
         public uint ControlWord;
         public uint StatusWord;
@@ -454,20 +460,12 @@ internal static class Program
         public uint ErrorSelector;
         public uint DataOffset;
         public uint DataSelector;
-
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 80)]
-        public byte[] RegisterArea;
-
+        public fixed byte RegisterArea[80];
         public uint Cr0NpxState;
-
-        public static FLOATING_SAVE_AREA Create() => new()
-        {
-            RegisterArea = new byte[80]
-        };
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct CONTEXT32
+    private unsafe struct CONTEXT32
     {
         public uint ContextFlags;
         public uint Dr0;
@@ -493,15 +491,9 @@ internal static class Program
         public uint EFlags;
         public uint Esp;
         public uint SegSs;
+        public fixed byte ExtendedRegisters[512];
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 512)]
-        public byte[] ExtendedRegisters;
-
-        public static CONTEXT32 Create() => new()
-        {
-            FloatSave = FLOATING_SAVE_AREA.Create(),
-            ExtendedRegisters = new byte[512]
-        };
+        public static CONTEXT32 Create() => default;
     }
 
     private sealed class TraceResult
