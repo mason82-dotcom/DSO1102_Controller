@@ -38,6 +38,9 @@ internal static class Program
             var totalTimeoutMs = int.TryParse(GetArg(args, "--total-timeout-ms"), out var parsedTotalTimeout)
                 ? parsedTotalTimeout
                 : Math.Max(idleTimeoutMs, 30_000);
+            var distinctPointerArg = int.TryParse(GetArg(args, "--distinct-pointer-arg"), out var parsedDistinctPointerArg)
+                ? parsedDistinctPointerArg
+                : 0;
 
             if (!File.Exists(exePath))
                 throw new FileNotFoundException("Vendor application not found.", exePath);
@@ -51,12 +54,14 @@ internal static class Program
                 throw new ArgumentOutOfRangeException(nameof(idleTimeoutMs), "Idle timeout must be 1000..900000 ms.");
             if (totalTimeoutMs is < 1_000 or > 1_800_000)
                 throw new ArgumentOutOfRangeException(nameof(totalTimeoutMs), "Total timeout must be 1000..1800000 ms.");
+            if (distinctPointerArg is < 0 or > 16)
+                throw new ArgumentOutOfRangeException(nameof(distinctPointerArg), "Distinct pointer argument must be 0..16.");
 
             var exportRva = PeExports.GetExportRva(dllPath, exportName);
             if (exportRva == 0)
                 throw new EntryPointNotFoundException($"Export '{exportName}' not found in '{dllPath}'.");
 
-            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs);
+            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs, distinctPointerArg);
             Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             return result.Calls.Count > 0 ? 0 : 2;
         }
@@ -79,7 +84,8 @@ internal static class Program
         int argCount,
         int maxCalls,
         int idleTimeoutMs,
-        int totalTimeoutMs)
+        int totalTimeoutMs,
+        int distinctPointerArg)
     {
         var startup = new STARTUPINFO
         {
@@ -118,6 +124,9 @@ internal static class Program
         List<ArgumentSnapshot> snapshots = [];
         string? loadedDll = null;
         var calls = new List<CallTrace>();
+        string? lastDistinctPointerPreview = null;
+        var observedCallCount = 0;
+        var suppressedDuplicateCount = 0;
 
         try
         {
@@ -272,13 +281,36 @@ internal static class Program
                                 if (!SetThreadContext(thread, ref context))
                                     throw new Win32Exception(Marshal.GetLastWin32Error(), "SetThreadContext failed.");
 
-                                calls.Add(new CallTrace
+                                observedCallCount++;
+
+                                var recordCall = true;
+                                if (distinctPointerArg > 0)
                                 {
-                                    Sequence = calls.Count + 1,
-                                    ReturnAddress = rawStack.Length > 0 ? $"0x{rawStack[0]:X8}" : null,
-                                    ReturnEax = $"0x{returnEax:X8}",
-                                    Arguments = snapshots
-                                });
+                                    var distinctSnapshot = snapshots.FirstOrDefault(x => x.Index == distinctPointerArg);
+                                    var currentPreview = distinctSnapshot?.PointerPreviewHex;
+
+                                    if (currentPreview == lastDistinctPointerPreview && currentPreview is not null)
+                                    {
+                                        recordCall = false;
+                                        suppressedDuplicateCount++;
+                                    }
+                                    else
+                                    {
+                                        lastDistinctPointerPreview = currentPreview;
+                                    }
+                                }
+
+                                if (recordCall)
+                                {
+                                    calls.Add(new CallTrace
+                                    {
+                                        Sequence = calls.Count + 1,
+                                        ObservedSequence = observedCallCount,
+                                        ReturnAddress = rawStack.Length > 0 ? $"0x{rawStack[0]:X8}" : null,
+                                        ReturnEax = $"0x{returnEax:X8}",
+                                        Arguments = snapshots
+                                    });
+                                }
 
                                 entryCaptured = false;
                                 rawStack = [];
@@ -367,6 +399,9 @@ internal static class Program
             LoadedDll = loadedDll,
             RequestedMaxCalls = maxCalls,
             CapturedCallCount = calls.Count,
+            ObservedCallCount = observedCallCount,
+            SuppressedDuplicateCount = suppressedDuplicateCount,
+            DistinctPointerArg = distinctPointerArg,
             IdleTimeoutMs = idleTimeoutMs,
             TotalTimeoutMs = totalTimeoutMs,
             Calls = calls,
@@ -648,6 +683,9 @@ internal static class Program
         public string? LoadedDll { get; init; }
         public int RequestedMaxCalls { get; init; }
         public int CapturedCallCount { get; init; }
+        public int ObservedCallCount { get; init; }
+        public int SuppressedDuplicateCount { get; init; }
+        public int DistinctPointerArg { get; init; }
         public int IdleTimeoutMs { get; init; }
         public int TotalTimeoutMs { get; init; }
         public List<CallTrace> Calls { get; init; } = [];
@@ -657,6 +695,7 @@ internal static class Program
     private sealed class CallTrace
     {
         public int Sequence { get; init; }
+        public int ObservedSequence { get; init; }
         public string? ReturnAddress { get; init; }
         public string? ReturnEax { get; init; }
         public List<ArgumentSnapshot> Arguments { get; init; } = [];
