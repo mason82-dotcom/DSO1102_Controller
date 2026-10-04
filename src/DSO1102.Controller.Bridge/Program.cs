@@ -438,9 +438,6 @@ internal static class Program
                 waveformReadValid,
                 allZeroA,
                 allZeroB,
-                decoderLooksSane,
-                adcRangeFractionA,
-                adcRangeFractionB,
                 channelMapping = waveformReadValid
                     ? "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically."
                     : "Not evaluated because both output buffers remained unchanged/all-zero.",
