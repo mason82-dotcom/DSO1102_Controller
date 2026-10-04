@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('voltage','offset')]
+    [ValidateSet('voltage','offset','channel')]
     [string]$Mode,
 
     [int]$MaxCalls = 16,
@@ -22,6 +22,10 @@ switch ($Mode) {
     'offset' {
         $export = 'dsoSetOffset'
         $argumentCount = 6
+    }
+    'channel' {
+        $export = '_dsoSetChIn@8'
+        $argumentCount = 2
     }
     default {
         throw "Unsupported mode: $Mode"
@@ -55,4 +59,21 @@ Expected mapping hypothesis to verify:
   arg3 = CH2 vertical range code
   arg5 = CH2 coupling
 Do not promote the hypothesis until runtime trace confirmation.
+#>
+
+
+<#
+Recommended channel-enable verification sequence for -Mode channel:
+  Start with CH1 enabled and CH2 disabled.
+  -> enable CH2
+  -> disable CH2
+  -> enable CH2
+  -> disable CH1
+  -> enable CH1
+
+Keep V/div, coupling, timebase, trigger and probe settings unchanged.
+
+This trace is read-only. The candidate export _dsoSetChIn@8 is selected because
+its name strongly suggests channel-input control, but semantics must be proven
+from the runtime trace before the bridge invokes it.
 #>
