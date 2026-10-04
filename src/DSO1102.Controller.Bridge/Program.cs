@@ -342,9 +342,6 @@ internal static class Program
         var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
         var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
         var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
-        var setTriggerAndSampleRateNew = selfInitializeTimeBase
-            ? library.GetDelegate<DsoSetTriggerAndSampleRateNewDelegate>("dsoSetTriggerAndSampleRateNew")
-            : null;
 
         var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
         if (deviceIndex < 0)
@@ -494,6 +491,9 @@ internal static class Program
         var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
         var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
         var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
+        var setTriggerAndSampleRateNew = selfInitializeTimeBase
+            ? library.GetDelegate<DsoSetTriggerAndSampleRateNewDelegate>("dsoSetTriggerAndSampleRateNew")
+            : null;
 
         var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
         if (deviceIndex < 0)
