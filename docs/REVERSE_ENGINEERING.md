@@ -2426,3 +2426,64 @@ A read-only runtime trace is exposed as:
 ```
 
 The runtime tracer now also decodes the combined control byte for each observed call.
+
+
+## Guarded complete transient analog self-initialization probe
+
+A new bridge command is available:
+
+```text
+self-init-1ms-analog
+```
+
+It is deliberately limited to one known profile and uses only transient, already reverse-engineered vendor exports.
+
+Target state:
+
+```text
+Time/DIV              1 ms/div
+CH1 range             1 V/div
+CH2 range             1 V/div
+CH1 coupling          DC
+CH2 coupling          DC
+CH1 bandwidth filter  off
+CH2 bandwidth filter  off
+trigger HF rejection  off
+trigger source        CH1
+CH1 vertical position midpoint
+CH2 vertical position midpoint
+trigger level midpoint
+```
+
+The bridge sequence uses:
+
+```text
+InitLevelRange
+dsoSetFiltAndVoltageData
+dsoSetFilt
+dsoSetVoltageAndCoupling
+dsoSetOffset
+dsoSetTriggerAndSampleRateNew
+capture/trigger/read path
+```
+
+The 44-word calibration table passed to `dsoSetOffset` is reconstructed live from the read-only `dsoGetChannelLevel` result.
+
+No persistent write export is called.
+
+The only remaining assumption in this guarded probe is the midpoint position value:
+
+```text
+128 on the vendor 0..255 position scale
+```
+
+That midpoint is strongly supported by the family structure and offset interpolation, but this command exists specifically to validate it on the real DSO-1102 before the same sequence is promoted into the normal hardware backend.
+
+Two raw-frame export commands are also available for the already self-init-verified timebase profiles:
+
+```text
+frame-400us-adc
+frame-1ms-adc
+```
+
+They emit both channels as `u16le-base64` and explicitly label the payload as pre-vendor-EXE ADC-domain data rather than calibrated volts.
