@@ -623,9 +623,10 @@ internal static class Program
                 allZeroA,
                 allZeroB,
                 channelMapping = waveformReadValid
-                    ? "Pending empirical CH1/CH2 mapping. CH1 is physically tied to GND for this test."
+                    ? "Buffer A is the leading CH1 candidate: with CH1 tied to GND it is markedly flatter than buffer B. Final mapping will be confirmed with a driven signal."
                     : "Not evaluated because the vendor call did not populate either buffer.",
-                voltageCalibrationAppliedByVendorDll = true
+                physicalVoltageConversionApplied = false,
+                vendorCalibrationStateUsed = true
             },
             safety = new
             {
@@ -646,26 +647,68 @@ internal static class Program
         if (samples.Length == 0)
             return new { count = 0 };
 
-        var min = samples.Min();
-        var max = samples.Max();
-        var mean = samples.Average(x => (double)x);
-        var variance = samples
-            .Select(x =>
-            {
-                var d = x - mean;
-                return d * d;
-            })
-            .Average();
+        var rawMin = samples.Min();
+        var rawMax = samples.Max();
+
+        // Normal decoded DSO-1102 samples are byte-range ADC codes expanded to
+        // 16-bit words. Values above 0x00FF are retained separately because the
+        // vendor decoder can emit signed/boundary values such as 0xFFFC (-4)
+        // at the capture edge.
+        var adcSamples = samples.Where(x => x <= 0x00FF).ToArray();
+        var nonAdcSamples = samples.Where(x => x > 0x00FF).ToArray();
+
+        double? adcMean = null;
+        double? adcStdDev = null;
+        ushort? adcMin = null;
+        ushort? adcMax = null;
+
+        if (adcSamples.Length > 0)
+        {
+            adcMin = adcSamples.Min();
+            adcMax = adcSamples.Max();
+            adcMean = adcSamples.Average(x => (double)x);
+            var mean = adcMean.Value;
+            var variance = adcSamples
+                .Select(x =>
+                {
+                    var d = x - mean;
+                    return d * d;
+                })
+                .Average();
+            adcStdDev = Math.Sqrt(variance);
+        }
 
         return new
         {
             count = samples.Length,
-            min,
-            max,
-            peakToPeakCounts = max - min,
-            mean,
-            standardDeviationCounts = Math.Sqrt(variance),
-            distinctValues = samples.Distinct().Count(),
+            raw16 = new
+            {
+                min = rawMin,
+                max = rawMax,
+                distinctValues = samples.Distinct().Count()
+            },
+            adc8 = new
+            {
+                validCount = adcSamples.Length,
+                excludedCount = nonAdcSamples.Length,
+                min = adcMin,
+                max = adcMax,
+                peakToPeakCounts = adcMin.HasValue && adcMax.HasValue
+                    ? adcMax.Value - adcMin.Value
+                    : (int?)null,
+                mean = adcMean,
+                standardDeviationCounts = adcStdDev,
+                distinctValues = adcSamples.Distinct().Count()
+            },
+            excluded16BitValues = nonAdcSamples
+                .Take(16)
+                .Select(x => new
+                {
+                    raw = x,
+                    hex = $"0x{x:X4}",
+                    signed = unchecked((short)x)
+                })
+                .ToArray(),
             first64 = samples.Take(64).ToArray()
         };
     }
