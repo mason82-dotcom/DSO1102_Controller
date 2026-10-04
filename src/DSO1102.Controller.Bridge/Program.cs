@@ -794,6 +794,17 @@ internal static class Program
                 decodedOutputRateMeaning = "Rate inferred from sample spacing in the vendor-decoded output array; not necessarily the physical ADC clock.",
                 hardwareSamplerateProgramming = DescribeHardwareSamplerateProgramming(timeBaseCode),
                 triggerSampleWords = tracedPrefix.Take(6).ToArray(),
+                triggerSampleState = new
+                {
+                    triggerInputSelectorRaw = tracedPrefix[0],
+                    fastTimebaseHardwareChannelModeRaw = tracedPrefix[1],
+                    timeBaseCode = tracedPrefix[2],
+                    triggerPositionPercent = tracedPrefix[3],
+                    recordLengthStateRaw = tracedPrefix[4],
+                    hardwareRecordLengthMode = tracedPrefix[4] == 0 ? 1 : 2,
+                    word5Unknown = tracedPrefix[5],
+                    note = "word[3] and word[4] roles verified by direct DSO1102USB.dll disassembly; record-length helper distinguishes only zero vs non-zero."
+                },
                 calibrationA,
                 calibrationB,
                 channelLevelCount = channelLevels.Length
