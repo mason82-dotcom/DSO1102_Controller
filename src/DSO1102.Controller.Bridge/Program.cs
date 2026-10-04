@@ -59,6 +59,42 @@ internal static class Program
         uint reserved7,
         uint mode);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int InitLevelRangeDelegate(int deviceIndex);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoSetFiltAndVoltageDataDelegate(
+        int deviceIndex,
+        ushort channel1Filter,
+        ushort channel2Filter,
+        ushort channel1Range,
+        ushort channel2Range);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoSetFiltDelegate(
+        int deviceIndex,
+        ushort channel1Filter,
+        ushort channel2Filter,
+        ushort triggerHfRejection);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoSetVoltageAndCouplingDelegate(
+        int deviceIndex,
+        ushort channel1Range,
+        ushort channel2Range,
+        ushort channel1Coupling,
+        ushort channel2Coupling,
+        ushort triggerSource);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoSetOffsetDelegate(
+        int deviceIndex,
+        IntPtr positionState,
+        ushort channel1Range,
+        ushort channel2Range,
+        ushort triggerSource,
+        IntPtr packedCalibrationWords);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryExW(string lpFileName, IntPtr hFile, uint dwFlags);
 
@@ -95,8 +131,9 @@ internal static class Program
                 "self-init-4ms" => CaptureGroundBaselineV2(dllPath, "self-init-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
                 "frame-400us-adc" => CaptureGroundBaselineV2(dllPath, "frame-400us-adc", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true),
                 "frame-1ms-adc" => CaptureGroundBaselineV2(dllPath, "frame-1ms-adc", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true),
+                "self-init-1ms-analog" => CaptureGroundBaselineV2(dllPath, "self-init-1ms-analog", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, selfInitializeAnalog: true),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, self-init-1ms-analog, exports.")
             };
         }
         catch (Exception ex)
@@ -555,7 +592,8 @@ internal static class Program
         string? timeBaseLabel = null,
         double? decodedOutputReferenceRateHz = null,
         bool selfInitializeTimeBase = false,
-        bool emitAdcPayload = false)
+        bool emitAdcPayload = false,
+        bool selfInitializeAnalog = false)
     {
         using var library = VendorLibrary.Load(dllPath);
 
@@ -569,6 +607,21 @@ internal static class Program
         var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
         var setTriggerAndSampleRateNew = selfInitializeTimeBase
             ? library.GetDelegate<DsoSetTriggerAndSampleRateNewDelegate>("dsoSetTriggerAndSampleRateNew")
+            : null;
+        var initLevelRange = selfInitializeAnalog
+            ? library.GetDelegate<InitLevelRangeDelegate>("InitLevelRange")
+            : null;
+        var setFiltAndVoltageData = selfInitializeAnalog
+            ? library.GetDelegate<DsoSetFiltAndVoltageDataDelegate>("dsoSetFiltAndVoltageData")
+            : null;
+        var setFilt = selfInitializeAnalog
+            ? library.GetDelegate<DsoSetFiltDelegate>("dsoSetFilt")
+            : null;
+        var setVoltageAndCoupling = selfInitializeAnalog
+            ? library.GetDelegate<DsoSetVoltageAndCouplingDelegate>("dsoSetVoltageAndCoupling")
+            : null;
+        var setOffset = selfInitializeAnalog
+            ? library.GetDelegate<DsoSetOffsetDelegate>("dsoSetOffset")
             : null;
 
         var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
@@ -603,6 +656,109 @@ internal static class Program
 
         int? timeBaseSetterResult = null;
         ushort[]? setterPrefix = null;
+        object? analogInitialization = null;
+
+        if (selfInitializeAnalog)
+        {
+            if (initLevelRange is null ||
+                setFiltAndVoltageData is null ||
+                setFilt is null ||
+                setVoltageAndCoupling is null ||
+                setOffset is null)
+            {
+                return Fail("Analog self-initialization requested, but one or more verified vendor exports could not be resolved.");
+            }
+
+            const ushort range1V = 6;
+            const ushort couplingDc = 0;
+            const ushort triggerSourceCh1 = 0;
+            const ushort centeredPosition = 128;
+
+            var packedCalibrationWords = Enumerable.Range(0, channelLevels.Length / 2)
+                .Select(i => (ushort)((channelLevels[i * 2] << 8) | channelLevels[i * 2 + 1]))
+                .ToArray();
+
+            if (packedCalibrationWords.Length != 44)
+                return Fail($"Expected 44 packed calibration words, got {packedCalibrationWords.Length}.");
+
+            ushort[] positionState =
+            [
+                centeredPosition, // CH1 vertical position
+                centeredPosition, // CH2 vertical position
+                centeredPosition, // CH1 trigger level
+                centeredPosition, // CH2 trigger level
+                centeredPosition  // ALT/EXT trigger level
+            ];
+
+            var positionHandle = GCHandle.Alloc(positionState, GCHandleType.Pinned);
+            var calibrationHandle = GCHandle.Alloc(packedCalibrationWords, GCHandleType.Pinned);
+
+            int initLevelRangeResult;
+            int filterVoltageResult;
+            int filterResult;
+            int voltageCouplingResult;
+            int offsetResult;
+
+            try
+            {
+                initLevelRangeResult = initLevelRange(deviceIndex);
+                filterVoltageResult = setFiltAndVoltageData(
+                    deviceIndex, 0, 0, range1V, range1V);
+                filterResult = setFilt(deviceIndex, 0, 0, 0);
+                voltageCouplingResult = setVoltageAndCoupling(
+                    deviceIndex,
+                    range1V,
+                    range1V,
+                    couplingDc,
+                    couplingDc,
+                    triggerSourceCh1);
+                offsetResult = setOffset(
+                    deviceIndex,
+                    positionHandle.AddrOfPinnedObject(),
+                    range1V,
+                    range1V,
+                    triggerSourceCh1,
+                    calibrationHandle.AddrOfPinnedObject());
+            }
+            finally
+            {
+                calibrationHandle.Free();
+                positionHandle.Free();
+            }
+
+            analogInitialization = new
+            {
+                transientOnly = true,
+                channel1RangeCode = range1V,
+                channel2RangeCode = range1V,
+                rangeLabel = "1 V/div",
+                channel1CouplingCode = couplingDc,
+                channel2CouplingCode = couplingDc,
+                couplingLabel = "DC",
+                channel1Filter = 0,
+                channel2Filter = 0,
+                triggerHfRejection = 0,
+                triggerSourceCode = triggerSourceCh1,
+                triggerSource = "CH1",
+                channel1PositionRaw = centeredPosition,
+                channel2PositionRaw = centeredPosition,
+                triggerPositionRaw = centeredPosition,
+                centeredPositionEvidence = "Strong structural/family inference (0..255 midpoint); this command exists specifically to runtime-verify it on the DSO-1102.",
+                initLevelRangeResult,
+                filterVoltageResult,
+                filterResult,
+                voltageCouplingResult,
+                offsetResult
+            };
+
+            if (filterVoltageResult == 0 ||
+                filterResult == 0 ||
+                voltageCouplingResult == 0 ||
+                offsetResult == 0)
+            {
+                return Fail("At least one transient analog self-initialization vendor call returned failure.");
+            }
+        }
 
         captureStart(deviceIndex);
         Thread.Sleep(3);
@@ -815,6 +971,8 @@ internal static class Program
                 selfInitializedTimeBase = selfInitializeTimeBase,
                 timeBaseSetterResult,
                 setterWords = setterPrefix?.Take(23).ToArray(),
+                selfInitializedAnalog = selfInitializeAnalog,
+                analogInitialization,
                 timeBaseCode,
                 timeBaseLabel,
                 decodedOutputReferenceRateHz,
@@ -885,11 +1043,14 @@ internal static class Program
             {
                 persistentConfigurationChanged = false,
                 transientTimeBaseConfigurationChanged = selfInitializeTimeBase && timeBaseSetterResult != 0,
+                transientAnalogConfigurationChanged = selfInitializeAnalog,
                 calibrationWritten = false,
                 flashWritten = false,
                 deviceIdWritten = false,
-                configurationSettersCalled = selfInitializeTimeBase,
-                configurationSetter = selfInitializeTimeBase ? "dsoSetTriggerAndSampleRateNew" : null,
+                configurationSettersCalled = selfInitializeTimeBase || selfInitializeAnalog,
+                configurationSetter = selfInitializeAnalog
+                    ? "InitLevelRange + dsoSetFiltAndVoltageData + dsoSetFilt + dsoSetVoltageAndCoupling + dsoSetOffset + dsoSetTriggerAndSampleRateNew"
+                    : selfInitializeTimeBase ? "dsoSetTriggerAndSampleRateNew" : null,
                 waveformRead = waveformReadValid
             }
         });
