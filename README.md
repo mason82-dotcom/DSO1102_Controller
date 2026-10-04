@@ -64,3 +64,59 @@ The hardware backend is based on the original vendor DLL and driver rather than 
 - `docs/REVERSE_ENGINEERING.md` — chronological runtime/static findings and hardware verification notes.
 
 Persistent calibration, flash, device-ID and device-address write functions remain excluded from normal controller operation.
+
+
+## Experimental real-hardware backend
+
+The repository now contains a guarded first real-hardware path using the original
+32-bit vendor DLL through the x86 bridge.
+
+Current scope:
+
+- Windows x64 WPF controller;
+- packaged x86 bridge launched out-of-process;
+- real device discovery through `dsoSearchDevice`;
+- FPGA version reporting;
+- runtime-verified `1 ms/div` self-initialized capture profile;
+- CH1/CH2 raw frames returned as decoded ADC counts;
+- sentinel values are sanitized before signal analysis;
+- raw frames are decimated to the requested application frame length;
+- amplitude is explicitly labelled `ADC`, not volts;
+- Single Capture only in the GUI for now.
+
+The first real backend deliberately does **not** claim to set or know the current
+analog V/div/coupling state. The normal `frame-1ms-adc` command self-initializes
+the verified timebase path while preserving the existing analog front-end state.
+
+A separate guarded test command exists for the reconstructed transient analog
+setup:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File .\tools\Run-HardwareProbe.ps1 `
+  -Command self-init-1ms-analog
+```
+
+That command targets 1 ms/div, 1 V/div, DC, filters off and centered
+vertical/trigger positions. It uses only transient high-level vendor setters and
+does not call calibration, flash, device-ID or device-address write exports.
+
+The analog self-init sequence is intentionally not promoted into the normal GUI
+backend until it has been verified on the physical DSO-1102.
+
+### Packaged bridge
+
+CI places the self-contained x86 bridge under:
+
+```text
+bridge\DSO1102_Bridge_x86.exe
+```
+
+inside the x64 controller artifact.
+
+For development builds, the bridge can also be selected explicitly:
+
+```powershell
+$env:DSO1102_BRIDGE_EXE = "D:\path\to\DSO1102_Bridge_x86.exe"
+$env:DSO1102_SDK_DLL = "C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll"
+```
