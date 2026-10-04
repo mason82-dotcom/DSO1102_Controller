@@ -40,6 +40,60 @@ public partial class MainWindow : Window
         await AcquireAndRenderAsync(CancellationToken.None);
     }
 
+    private async void ConnectHardware_Click(object sender, RoutedEventArgs e)
+    {
+        await StopAcquisitionAsync();
+
+        if (_device is not null)
+            await _device.DisposeAsync();
+
+        try
+        {
+            _device = new VoltcraftDso1102Device();
+            await _device.ConnectAsync();
+
+            var hardwareSettings = _settings with
+            {
+                TimePerDivisionSeconds = 0.001,
+                Channel1Enabled = true,
+                Channel2Enabled = true,
+                Channel1VoltsPerDivision = 1.0,
+                Channel2VoltsPerDivision = 1.0,
+                TriggerSource = TriggerSource.Channel1,
+                TriggerSlope = TriggerSlope.Rising
+            };
+
+            await _device.ApplySettingsAsync(hardwareSettings);
+
+            DeviceHeaderText.Text =
+                $"{_device.DeviceInfo.Name} — VID {_device.DeviceInfo.VendorId:X4} / PID {_device.DeviceInfo.ProductId:X4}" +
+                (string.IsNullOrWhiteSpace(_device.DeviceInfo.Firmware)
+                    ? string.Empty
+                    : $" — {_device.DeviceInfo.Firmware}");
+
+            StatusText.Text =
+                "DSO-1102 verbunden. Verifizierter 1-ms/div-Rohframepfad; Amplitude noch als ADC-Counts.";
+
+            RunButton.IsEnabled = true;
+            SingleButton.IsEnabled = true;
+
+            await AcquireAndRenderAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            if (_device is not null)
+            {
+                await _device.DisposeAsync();
+                _device = null;
+            }
+
+            RunButton.IsEnabled = false;
+            SingleButton.IsEnabled = false;
+            StopButton.IsEnabled = false;
+            StatusText.Text = $"DSO-1102 Verbindung fehlgeschlagen: {ex.Message}";
+        }
+    }
+
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
         if (_device is null || !_device.IsConnected || _runCancellation is not null)
