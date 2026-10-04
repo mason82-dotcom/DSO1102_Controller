@@ -1155,3 +1155,60 @@ The exact UI meaning of CH2's constant values must be confirmed by a dedicated C
 Arguments 1 and 6 carried varying non-zero upper 16 bits while their low 16 bits remained zero. As with other vendor calls, those upper bits are treated as caller register/stack residue until a runtime trace proves otherwise.
 
 All calls returned a low-word success value of 1 (`ReturnEax ...0001`).
+
+
+## CH2 voltage/div and coupling confirmation
+
+A second controlled `dsoSetVoltageAndCoupling` trace changed only CH2.
+
+Important operator note: the first observed call was caused by explicitly enabling CH2 in the vendor UI. Therefore that first call must not be classified as generic startup noise.
+
+Observed initial state after CH2 enable:
+
+```text
+arg2 = 6
+arg3 = 6
+arg4 = 0
+arg5 = 1
+```
+
+The next two calls repeated the same scalar state. They are treated as refresh/re-application calls.
+
+The explicit CH2 test sequence then produced:
+
+```text
+CH2 DC, 1 V/div     -> arg2=6, arg3=6, arg4=0, arg5=0
+CH2 DC, 500 mV/div  -> arg2=6, arg3=5, arg4=0, arg5=0
+CH2 DC, 2 V/div     -> arg2=6, arg3=7, arg4=0, arg5=0
+CH2 AC, 2 V/div     -> arg2=6, arg3=7, arg4=0, arg5=1
+CH2 DC, 2 V/div     -> arg2=6, arg3=7, arg4=0, arg5=0
+CH2 DC, 1 V/div     -> arg2=6, arg3=6, arg4=0, arg5=0
+```
+
+Therefore the complete tested runtime mapping is:
+
+```text
+arg1 low16 = device index = 0
+arg2       = CH1 vertical range code
+arg3       = CH2 vertical range code
+arg4       = CH1 coupling: 0=DC, 1=AC
+arg5       = CH2 coupling: 0=DC, 1=AC
+arg6 low16 = 0
+```
+
+Verified vertical range codes on both channels:
+
+```text
+5 = 500 mV/div
+6 = 1 V/div
+7 = 2 V/div
+```
+
+All traced calls returned a low-word success value of 1.
+
+### CH2 enable/disable remains unresolved
+
+Because enabling CH2 caused a `dsoSetVoltageAndCoupling` call, the vendor application clearly reapplies the channel's analog state when the channel is enabled. However, no dedicated enable bit is visible in the six low-16 scalar arguments of this call: the first enable-triggered call used the same range/coupling-shaped values later seen during ordinary analog updates.
+
+Therefore, CH2 enabled/disabled state must not be inferred from `dsoSetVoltageAndCoupling` alone. The actual channel-enable control is still to be located in another setter/state path before the bridge exposes channel enable/disable.
+
