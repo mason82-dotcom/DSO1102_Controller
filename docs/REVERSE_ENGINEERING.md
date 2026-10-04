@@ -1909,3 +1909,88 @@ The DSO-1102 has directly demonstrated 524,288 written samples per channel, but 
 To avoid a possible caller-buffer overrun while that behavior is tested, the bridge now allocates 1,048,576 UInt16 elements per waveform buffer. This is a host-side safety margin only; it does not request a larger acquisition or send any additional device command.
 
 Full-buffer analysis estimates the populated prefix from the last non-zero write before calculating ADC statistics, so an untouched zero-filled guard tail is not mistaken for real waveform data.
+
+
+## Complete DSO-1102 Time/DIV code table
+
+Direct analysis of the real `DSO1102USB.dll` shows that `_dsoSetSampleRate@8` switches on a 16-bit time-base field with valid values `0..37`.
+
+The vendor EXE contains the ordered Time/DIV resource list. Aligning the 38 DLL codes with that list and the already runtime-verified anchors `15=400 us`, `16=1 ms`, `17=2 ms`, `18=4 ms` gives:
+
+```text
+ 0 = 4 ns/div
+ 1 = 10 ns/div
+ 2 = 20 ns/div
+ 3 = 40 ns/div
+ 4 = 100 ns/div
+ 5 = 200 ns/div
+ 6 = 400 ns/div
+ 7 = 1 us/div
+ 8 = 2 us/div
+ 9 = 4 us/div
+10 = 10 us/div
+11 = 20 us/div
+12 = 40 us/div
+13 = 100 us/div
+14 = 200 us/div
+15 = 400 us/div
+16 = 1 ms/div
+17 = 2 ms/div
+18 = 4 ms/div
+19 = 10 ms/div
+20 = 20 ms/div
+21 = 40 ms/div
+22 = 100 ms/div
+23 = 200 ms/div
+24 = 400 ms/div
+25 = 1 s/div
+26 = 2 s/div
+27 = 4 s/div
+28 = 10 s/div
+29 = 20 s/div
+30 = 40 s/div
+31 = 1 min/div
+32 = 2 min/div
+33 = 4 min/div
+34 = 10 min/div
+35 = 20 min/div
+36 = 40 min/div
+37 = 1 h/div
+```
+
+The vendor EXE also contains a shared `2 ns/div` UI string, but the DSO-1102 DLL sample-rate switch has only 38 entries and the verified code anchors align exactly when the DSO-1102 table starts at 4 ns/div. Therefore the shared 2 ns/div resource is not assigned a DSO-1102 code.
+
+Only codes already exercised through the real DSO-1102 hardware are currently exposed by the bridge's guarded self-init commands. The complete table is documentation for further tracing, not authorization to invoke untested profiles.
+
+## dsoSetTriggerAndSampleRateNew channel-mode behavior
+
+Direct disassembly of `dsoSetTriggerAndSampleRateNew` shows that the call to `_dsoSetChIn@8` is computed as:
+
+```text
+if (config.word[2] >= 10)
+    channelMode = 2;
+else
+    channelMode = config.word[1];
+```
+
+Because `config.word[2]` is the Time/DIV code, this means:
+
+```text
+codes 0..9   (4 ns .. 4 us) : use config.word[1]
+codes 10..37 (10 us .. 1 h) : force hardware channel mode 2
+```
+
+Therefore `_dsoSetChIn@8` is a hardware acquisition/samplerate channel-mode helper, not a direct UI visibility toggle.
+
+The previously observed `arg2=2` during 400 us / 1 ms / 2 ms / 4 ms operation is now explained statically by the `>=10` branch and must not be interpreted as proof that both UI channels were enabled.
+
+Historical DSO-2250 sources still provide a useful family hypothesis for fast-mode channel values:
+
+```text
+0 = CH1 hardware path
+1 = none
+2 = both
+3 = CH2 hardware path
+```
+
+but values 1 and 3 must be tested at a fast Time/DIV code below 10 before being promoted for the DSO-1102.
