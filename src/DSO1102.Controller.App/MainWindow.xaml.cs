@@ -72,9 +72,9 @@ public partial class MainWindow : Window
                     : $" — {_device.DeviceInfo.Firmware}");
 
             StatusText.Text =
-                "DSO-1102 verbunden. 1-ms/div-Rohframepfad; Amplitude als ADC-Counts, Analog-Frontend bleibt im aktuellen Gerätezustand.";
+                "DSO-1102 verbunden. Single-Capture: 1 ms/div, ADC-Counts; Analog-Frontend bleibt im aktuellen Gerätezustand. Live-Run folgt mit persistentem x86-Bridge-Server.";
 
-            RunButton.IsEnabled = true;
+            RunButton.IsEnabled = false;
             SingleButton.IsEnabled = true;
 
             await AcquireAndRenderAsync(CancellationToken.None);
