@@ -376,3 +376,134 @@ Do not directly transplant:
 The DSO-1102 project should continue to use its own vendor-DLL disassembly,
 runtime traces and clean-room C# bridge implementation as the primary source
 of truth.
+
+
+## Additional useful behavior
+
+### Trigger-point decoding
+
+OpenHantek does not use the capture-state trigger-point value verbatim. Its
+control layer applies a bitwise transformation in which every set bit toggles
+all lower-order bits.
+
+This is useful evidence that Hantek-family trigger-position values may be
+hardware-encoded rather than a plain linear sample index.
+
+The DSO-1102 vendor DLL currently returns its own processed/truncated trigger
+value to the bridge, so this transformation must not be applied to the
+DSO1102 bridge output unless direct comparison proves it is still required.
+
+Source:
+https://github.com/OpenHantek/openhantek/blob/master/openhantek/src/hantekdso/hantekdsocontrol.cpp
+
+### Raw-data channel layout
+
+OpenHantek treats the DSO-2250 family differently in normal and fast-rate
+operation:
+
+- normal mode: both channel buffers are present and raw samples are
+  de-interleaved into separate channel vectors;
+- fast-rate mode: one active channel consumes the complete raw buffer.
+
+This provides a strong architectural explanation for why a one-channel fast
+mode can have twice the effective record length.
+
+DSO1102_Controller should continue to consume the already-decoded vendor-DLL
+buffers rather than reproduce the raw USB de-interleaver unless a future
+explicit transport replacement is undertaken.
+
+### Vertical scaling model
+
+OpenHantek defines eight vertical screen divisions.
+
+The UI V/div sequence is:
+
+```text
+10 mV/div
+20 mV/div
+50 mV/div
+100 mV/div
+200 mV/div
+500 mV/div
+1 V/div
+2 V/div
+5 V/div
+```
+
+The DSO-2250 model stores the equivalent full-screen voltage spans:
+
+```text
+0.08 V
+0.16 V
+0.40 V
+0.80 V
+1.60 V
+4.00 V
+8.00 V
+16.00 V
+40.00 V
+```
+
+because each V/div setting spans eight vertical divisions.
+
+Its family conversion model is conceptually:
+
+```text
+normalized = rawSample / rawFullScale - calibratedOffset
+voltage    = normalized * fullScreenVoltageSpan
+```
+
+For the DSO-1102, the range-code sequence and 8-bit sample domain are strongly
+corroborated, but the final physical-voltage conversion must use the actual
+DSO-1102 calibration/offset measurements rather than copying OpenHantek
+constants blindly.
+
+Sources:
+https://github.com/OpenHantek/openhantek/blob/master/openhantek/src/viewconstants.h
+https://github.com/OpenHantek/openhantek/blob/master/openhantek/src/scopesettings.h
+https://github.com/OpenHantek/openhantek/blob/master/openhantek/src/hantekdso/models/modelDSO2250.cpp
+
+## Strong samplerate interpretation candidate
+
+The current OpenHantek DSO-2250 path provides an especially close match to the
+primary DSO-1102 samplerate field:
+
+```text
+fast-rate flag = bit 0
+downsampling   = bit 1
+programmed word = 0x10001 - divider
+normal base     = 100 MS/s
+fast base       = 200 MS/s
+fast maximum    = 250 MS/s
+```
+
+The DSO-1102's verified normal-profile command uses fast-rate bit 0 = 0,
+downsampling bit 1 = 1, and primary words that decode to:
+
+```text
+400 us/div -> divider 20
+1 ms/div   -> divider 40
+2 ms/div   -> divider 100
+4 ms/div   -> divider 200
+```
+
+If the DSO-1102 uses the same 100 MS/s normal-mode base clock as the DSO-2250
+lineage, these imply the following hardware acquisition rates:
+
+```text
+400 us/div -> 5.0 MS/s
+1 ms/div   -> 2.5 MS/s
+2 ms/div   -> 1.0 MS/s
+4 ms/div   -> 0.5 MS/s
+```
+
+This is a strong interpretation candidate, not yet a DSO-1102 runtime fact.
+
+It also explains why the vendor-decoded output grid can remain near 5 MS/s:
+the DLL may expand/repeat/interpolate slower hardware samples while presenting
+a common decoded array grid.
+
+The second 16-bit timing word present in the DSO-1102 10-byte 0x0E command has
+no counterpart in OpenHantek's public 8-byte DSO-2250 samplerate structure.
+That field remains DSO-1102/vendor-DLL-specific and must be reverse engineered
+independently.
