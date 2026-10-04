@@ -401,3 +401,24 @@ Referred to the 10:1 probe tip:
 ```
 
 This is only a first-order calibration estimate because the test output amplitude is nominal and the exact vertical-range calibration path has not yet been reconstructed.
+
+
+## Square-wave timing analysis
+
+The bridge now derives timing directly from the decoded ADC samples:
+
+1. split the waveform into low/high plateaus,
+2. place the transition threshold halfway between the plateau means,
+3. require four stable samples before accepting a state transition,
+4. collect rising and falling edge indices,
+5. calculate same-polarity edge-to-edge periods in samples.
+
+For captures of the DSO-1102 internal CAL/probe-compensation output, the software additionally reports a conditional sample-rate estimate under the documented nominal 1 kHz reference:
+
+```text
+estimatedSampleRateHz = meanPeriodSamples * 1000
+sampleIntervalNs      = 1e9 / estimatedSampleRateHz
+recordDurationMs      = sampleCount / estimatedSampleRateHz * 1000
+```
+
+The 1 kHz value is explicitly treated as a nominal external reference, not as a property inferred from the USB protocol.
