@@ -791,8 +791,19 @@ internal static class Program
                 timeBaseCode,
                 timeBaseLabel,
                 decodedOutputReferenceRateHz,
-                decodedOutputRateMeaning = "Rate inferred from sample spacing in the vendor-decoded output array; not necessarily the physical ADC clock.",
+                calReferencedEffectiveAcquisitionRateHz = decodedOutputReferenceRateHz,
+                decodedOutputRateMeaning = "Rate inferred from sample spacing in the deinterleaved hardware-transfer stream. Static dsoGetChannelData analysis shows no time-axis interpolation for the characterized Time/DIV>=10 deep-memory path; the ADC core clock may still be higher if hardware decimation is active.",
                 hardwareSamplerateProgramming = DescribeHardwareSamplerateProgramming(timeBaseCode),
+                decodedRecordDepthProgramming = new
+                {
+                    stateWord10 = tracedPrefix[10],
+                    samplesPerChannel = tracedPrefix[10] == 0 ? 0x2800 : 0x80000,
+                    rawTransferBytes = tracedPrefix[10] == 0 ? 0x5000 : 0x100000,
+                    interpretation = tracedPrefix[10] == 0
+                        ? "small decoded record: 10,240 samples/channel"
+                        : "deep decoded record: 524,288 samples/channel",
+                    source = "Direct static disassembly of DSO1102USB.dll dsoGetChannelData."
+                },
                 triggerSampleWords = tracedPrefix.Take(6).ToArray(),
                 triggerSampleState = new
                 {
@@ -1274,7 +1285,7 @@ internal static class Program
             ifSignalIs1kHz = new
             {
                 referenceFrequencyHz = 1000,
-                rateDomain = "vendor-decoded output sample grid; this is not proof of the physical ADC sample clock",
+                rateDomain = "effective sample spacing in the deinterleaved acquisition stream returned by the device/DLL; the physical ADC core clock may be higher if hardware decimation is active",
                 estimatedSampleRateHz = estimatedSampleRateAt1kHz,
                 estimatedSampleIntervalNs,
                 estimatedRecordDurationMs
