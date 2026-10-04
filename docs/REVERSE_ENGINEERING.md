@@ -1564,12 +1564,21 @@ This is strong evidence that the DSO1102 DLL's `dsoSetTriggerAndSampleRateNew` r
 
 ### Channel mode hypothesis
 
-Older Hantek-family code represents the enabled-channel mode with three logical states:
+The generic DSO-2090/2150 family uses:
 
 ```text
 0 = CH1 only
 1 = CH2 only
 2 = both channels
+```
+
+However, the DSO-2250 has a dedicated channel command and a different enum:
+
+```text
+0 = CH1 only
+1 = no channels
+2 = CH1 + CH2
+3 = CH2 only
 ```
 
 The DSO-1102 trace of `_dsoSetChIn@8` observed:
@@ -1579,9 +1588,9 @@ arg2 = 0 before CH2 was enabled
 arg2 = 2 after CH2 was enabled while CH1 remained enabled
 ```
 
-This exactly matches the CH1-only -> both transition.
+This exactly matches the DSO-2250-specific CH1-only -> both transition.
 
-The remaining value `1 = CH2 only` is still to be captured directly on the DSO-1102 before the mapping is promoted to a verified ABI.
+The remaining value to verify directly on the DSO-1102 is `3 = CH2 only`. Value `1 = no channels` should not be inferred as a usable UI state until explicitly observed.
 
 ### Raw waveform scaling
 
