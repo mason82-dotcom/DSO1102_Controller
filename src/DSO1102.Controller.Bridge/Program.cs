@@ -73,8 +73,9 @@ internal static class Program
                 "force" => ArmAndObserve(dllPath, forceTrigger: true),
                 "capture-gnd" => Fail("capture-gnd v1 is disabled because it used an incorrect vendor ABI. Use capture-gnd-v2 after initializing the known profile in the original application."),
                 "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath),
+                "capture-raw" => CaptureGroundBaselineV2(dllPath),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-gnd-v2, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, exports.")
             };
         }
         catch (Exception ex)
@@ -599,7 +600,7 @@ internal static class Program
             },
             profile = new
             {
-                name = "vendor-traced CH1 GND profile",
+                name = "vendor-traced CH1 profile",
                 requiresOriginalApplicationInitialization = true,
                 triggerSampleWords = tracedPrefix.Take(5).ToArray(),
                 calibrationA,
