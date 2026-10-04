@@ -1994,3 +1994,113 @@ Historical DSO-2250 sources still provide a useful family hypothesis for fast-mo
 ```
 
 but values 1 and 3 must be tested at a fast Time/DIV code below 10 before being promoted for the DSO-1102.
+
+
+## Correct vendor-application function-pointer table
+
+A fresh pass over the original EXE's `GetProcAddress` initialization resolved an earlier shifted-slot ambiguity. The verified object slots are:
+
+```text
++0x214 dsoGetChannelData
++0x218 dsoSearchDevice
++0x21C dsoGetDeviceAddress
++0x220 dsoSetTriggerAndSampleRate
++0x224 dsoSetTriggerAndSampleRateNew
++0x228 dsoGetLogicData
++0x22C dsoSetVoltageAndCoupling
++0x230 dsoSetOffset
++0x234 dsoCaptureStart
++0x238 dsoTriggerEnabled
++0x23C dsoGetChannelLevel
++0x240 dsoSetChannelLevel
++0x244 dsoGetCalData
++0x248 dsoGetCaptureState
++0x24C dsoForceTrigger
++0x250 dsoSetFilt
++0x254 dsoSetFiltAndVoltageData
++0x258 dsoFFT
++0x25C dsoFFTGetSamples
++0x260 dsoFFTBuffer
++0x264 dsoGetDeviceID
++0x268 dsoSetDeviceID
++0x26C dsoSetCalData
++0x270 dsoGetCalTrigState
++0x274 InitLevelRange
++0x278 dsoGetFPGAVersion
+```
+
+`dsoGetLogicData` at RVA `0x5980` is a trivial stub in this DLL revision: it returns success without a hardware transaction.
+
+## UI channel state versus fast-sampling channel mode
+
+The original application's per-channel state object contains three relevant fields:
+
+```text
++0x0C : 32-bit 0/1 state toggled by the channel UI
++0x14 : 16-bit coupling selection
++0x18 : 16-bit V/div range code
+```
+
+The common analog-state wrapper calls:
+
+```text
+dsoSetFiltAndVoltageData(
+    device,
+    channelStateA,
+    channelStateB,
+    channel1Range,
+    channel2Range)
+
+dsoSetVoltageAndCoupling(
+    device,
+    channel1Range,
+    channel2Range,
+    channel1Coupling,
+    channel2Coupling,
+    triggerSelector)
+```
+
+The two `+0x0C` fields are changed by UI handlers using an explicit 0/1 toggle and are passed only through `dsoSetFiltAndVoltageData`.
+
+This is a different mechanism from `_dsoSetChIn@8`, which `dsoSetTriggerAndSampleRateNew` forces to hardware mode 2 for Time/DIV codes >=10.
+
+Therefore normal UI channel enable/disable must be reconstructed from `dsoSetFiltAndVoltageData`, while `_dsoSetChIn@8` is reserved for the high-speed acquisition topology.
+
+A dedicated observational trace is available as:
+
+```powershell
+.\tools\Trace-AnalogConfig.ps1 -Mode enable
+```
+
+Static analysis establishes that arguments 4 and 5 are the CH1/CH2 V/div range codes. Runtime tracing is still required to prove whether argument 2 or 3 corresponds to CH1 and to establish the exact 0/1 polarity.
+
+## GND coupling is implemented in software
+
+The vendor UI defines coupling values:
+
+```text
+0 = DC
+1 = AC
+2 = GND
+```
+
+Direct disassembly of the hardware relay path shows only an AC distinction:
+
+```text
+coupling == 1 -> AC relay state
+coupling != 1 -> non-AC relay state
+```
+
+Thus DC and GND intentionally produce the same hardware relay configuration.
+
+The original application's waveform-processing path separately checks:
+
+```text
+channel.coupling == 2
+```
+
+When true, it does not copy the acquired waveform samples into the display buffer. Instead, it fills the displayed channel with a constant value derived from the channel's current vertical-position state, producing a flat ground-reference trace.
+
+Therefore GND on this DSO-1102 software stack is a display/data-processing mode, not a distinct input-relay command. A replacement controller should reproduce GND by suppressing the displayed/acquired signal and drawing the ground-reference level while leaving the hardware coupling in the non-AC state.
+
+This distinction matters for diagnostics: selecting GND in the replacement UI must not be presented as proof that the BNC input has been physically shorted to ground.
