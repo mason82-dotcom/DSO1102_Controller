@@ -293,3 +293,34 @@ for the agreed CH1-GND test profile. Argument 5 points exactly six words (12 byt
 For this same profile, the original application takes the `0x2800` branch after the vendor call, confirming 10,240 processed samples per channel for this capture mode.
 
 The bridge command `capture-gnd-v2` reproduces this traced ABI while still avoiding all persistent calibration, flash and device-ID writes.
+
+
+## First successful bridge waveform read
+
+A real-hardware `capture-gnd-v2` run succeeded with the runtime-verified ABI:
+
+```text
+stateCode          = 3 (CAPTURE_READY)
+triggerValue       = 5474
+vendorReadResult   = 1
+samples/channel    = 10240
+calibrationA/B     = 1 / 12
+```
+
+Both waveform buffers were populated by the vendor DLL.
+
+Observed leading samples:
+
+```text
+buffer A: 0xFFFC, 190, 190, 190, ... mostly 189/190
+buffer B: 0xFFF4, 62, 63, 62, ... mostly 62/63
+```
+
+The first value in each buffer is outside the normal 8-bit ADC range:
+
+- `0xFFFC` = signed `-4`
+- `0xFFF4` = signed `-12`
+
+Those values must not be folded into normal ADC noise/Vpp statistics. The bridge now reports raw 16-bit values separately and computes ADC statistics only from values in `0..255`.
+
+Because CH1 was physically tied to GND during this capture, buffer A is currently the leading CH1 candidate: it is markedly flatter than buffer B. Final CH1/CH2 mapping still requires one differential physical test with a known change on one channel.
