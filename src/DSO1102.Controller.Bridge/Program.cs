@@ -340,7 +340,7 @@ internal static class Program
         if (stateCode != 3)
             return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
 
-        const int smallBufferSamples = 10_240;
+        const int analysisSampleCount = 30_000;
         const int guardBufferSamples = 524_288;
 
         // The vendor DLL uses two six-word configuration blocks while decoding data.
@@ -390,8 +390,11 @@ internal static class Program
                     handle.Free();
         }
 
-        var a = bufferA.Take(smallBufferSamples).ToArray();
-        var b = bufferB.Take(smallBufferSamples).ToArray();
+        var a = bufferA.Take(analysisSampleCount).ToArray();
+        var b = bufferB.Take(analysisSampleCount).ToArray();
+        var allZeroA = a.All(x => x == 0);
+        var allZeroB = b.All(x => x == 0);
+        var waveformReadValid = readResult != 0 && !(allZeroA && allZeroB);
 
         WriteJson(new
         {
@@ -404,15 +407,24 @@ internal static class Program
                 stateName = CaptureStateName(stateCode),
                 triggerValue,
                 vendorReadResult = readResult,
-                assumedSampleCountPerBuffer = smallBufferSamples,
+                analysisSampleCountPerBuffer = analysisSampleCount,
+                sampleCountVerified = false,
                 configurationSource = "Original software initialized device; bridge performs no Set* call."
             },
             bufferA = SummarizeSamples(a),
             bufferB = SummarizeSamples(b),
             interpretation = new
             {
-                channelMapping = "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically.",
-                voltageCalibrationApplied = false
+                waveformReadValid,
+                allZeroA,
+                allZeroB,
+                channelMapping = waveformReadValid
+                    ? "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically."
+                    : "Not evaluated because both output buffers remained unchanged/all-zero.",
+                voltageCalibrationApplied = false,
+                diagnostic = waveformReadValid
+                    ? "Vendor DLL populated at least one output buffer."
+                    : "Capture reached ready state, but dsoGetChannelData did not populate either output buffer. ABI/auxiliary parameters remain unverified."
             },
             safety = new
             {
@@ -421,7 +433,7 @@ internal static class Program
                 flashWritten = false,
                 deviceIdWritten = false,
                 configurationSettersCalled = false,
-                waveformRead = true
+                waveformRead = waveformReadValid
             }
         });
 
