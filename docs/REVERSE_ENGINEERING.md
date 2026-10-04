@@ -2216,3 +2216,61 @@ word[6] = includes a bit consumed by the samplerate command
 ```
 
 The bridge now emits these decoded state fields in capture diagnostics.
+
+
+## `_dsoSetTrigIn@32` exact packet packing
+
+Direct disassembly of the real DSO-1102 helper at RVA `0x5220` shows that `_dsoSetTrigIn@32` builds a 10-byte command:
+
+```text
+byte 0 = 0x0C
+byte 1 = 0x0F
+byte 2 = packed trigger/control bits
+byte 3 = 0x00
+bytes 4..7 = arg8 as a little-endian 32-bit value
+byte 8 = DLL-global state byte
+byte 9 = 0xFF
+```
+
+The eight stdcall arguments are:
+
+```text
+arg1 = device index
+arg2 = source/selector input
+arg3 = 1-bit control input
+arg4 = 1-bit control input
+arg5 = multi-bit control input
+arg6 = 1-bit control input
+arg7 = 2-bit control input
+arg8 = 32-bit command value
+```
+
+For selector values 0..4, arg2 is translated before packing:
+
+```text
+arg2 = 0 -> packed source bits = 1
+arg2 = 1 -> packed source bits = 0
+arg2 = 2 -> packed source bits = 2
+arg2 = 3 -> packed source bits = 2
+arg2 = 4 -> packed source bits = 2
+```
+
+For the `dsoSetTriggerAndSampleRateNew` wrapper, the helper arguments are assembled as:
+
+```text
+_dsoSetTrigIn(
+    device,
+    config.word[0],
+    newSetter.arg4,
+    newSetter.arg2,
+    newSetter.arg5,
+    newSetter.arg6,
+    newSetter.arg7,
+    newSetter.arg8)
+```
+
+Thus `config.word[0]` is directly involved in trigger-input selection.
+
+In the already traced normal acquisition calls the New-setter auxiliary scalar args were mostly zero and `arg8=2`, which is not sufficient to assign every packed bit a UI semantic. The dedicated trigger trace remains required to map CH1/CH2/EXT and rising/falling behavior on this exact DSO-1102.
+
+The current trace mode uses whole-call Low16 signature deduplication so internal refresh calls with unchanged control state are suppressed.
