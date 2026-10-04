@@ -434,7 +434,27 @@ bit 1 = CH2 bandwidth/filter
 bit 2 = trigger HF rejection
 ```
 
-`dsoSetFiltAndVoltageData` is a combined path. It maps the two range codes to 1/2/5 gain subcodes, combines them with two filter bits, writes one byte through request `0xE5`, then sleeps 50 ms.
+`dsoSetFiltAndVoltageData` is a combined five-argument path:
+
+```text
+arg1 = device index
+arg2 = CH1 bandwidth/filter flag
+arg3 = CH2 bandwidth/filter flag
+arg4 = CH1 V/div range code
+arg5 = CH2 V/div range code
+```
+
+It maps both range codes to the same 1/2/5 gain subcodes and packs:
+
+```text
+bits 0..1 = CH1 gain
+bits 2..3 = CH2 gain
+bit 4     = CH2 filter
+bit 5     = CH1 filter
+bits 6..7 = 0
+```
+
+The byte is sent through request `0xE5`, then the DLL sleeps 50 ms. The original application wrapper at `0x454590` supplies the filter flags from channel-object offset `+0x0C` and range codes from `+0x18`.
 
 ## Offset and calibration
 
