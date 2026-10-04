@@ -365,3 +365,39 @@ buffer B sample[0] = 0xFFF4 (-12 signed)
 Because this out-of-range value is reproducibly confined to the first element in repeated captures, it is treated as a boundary/special decoder value and excluded from ADC statistics.
 
 Buffer A remains the leading CH1 candidate because CH1 was grounded and buffer A is the flatter of the two baselines. A known driven DC level on CH1 is still required for definitive channel mapping and voltage scaling.
+
+
+## Internal test-signal capture and channel mapping
+
+With CH1 connected to the DSO-1102 internal probe-compensation/test output through a 10:1 probe, the runtime-verified capture produced a clear two-level waveform in buffer A:
+
+```text
+CH1 / buffer A:
+  low plateau mean   = 131.0333 counts
+  high plateau mean  = 136.8468 counts
+  separation         = 5.8135 counts
+  high duty cycle    = 49.917 %
+  low cluster count  = 5128
+  high cluster count = 5111
+```
+
+Buffer B remained essentially flat around 62.23 counts. Its apparent second cluster contained only 10 of 10,239 valid samples (0.098 %) and is therefore an outlier/glitch cluster, not a waveform plateau.
+
+This definitively maps:
+
+```text
+buffer A = CH1
+buffer B = CH2
+```
+
+Using the nominal 2 Vpp probe-compensation signal and a 10:1 probe, the scope BNC sees approximately 0.2 Vpp. Against the measured 5.8135-count plateau separation, the first-order scale estimate is:
+
+```text
+0.2 Vpp / 5.8135 counts = 0.03440 V/count at the BNC
+                         = 34.4 mV/count
+
+Referred to the 10:1 probe tip:
+                         = 0.344 V/count
+```
+
+This is only a first-order calibration estimate because the test output amplitude is nominal and the exact vertical-range calibration path has not yet been reconstructed.
