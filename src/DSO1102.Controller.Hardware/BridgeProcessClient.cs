@@ -4,10 +4,13 @@ using System.Text.Json;
 
 namespace DSO1102.Controller.Hardware;
 
-internal sealed class BridgeProcessClient
+internal sealed class BridgeProcessClient : IAsyncDisposable
 {
     private readonly string _bridgeExe;
     private readonly string _vendorDll;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly StringBuilder _stderr = new();
+    private Process? _process;
 
     public BridgeProcessClient(string? bridgeExe = null, string? vendorDll = null)
     {
@@ -20,77 +23,190 @@ internal sealed class BridgeProcessClient
 
     public async Task<JsonDocument> RunAsync(string command, CancellationToken cancellationToken)
     {
+        await _gate.WaitAsync(cancellationToken);
+
+        try
+        {
+            EnsureServerStarted();
+
+            var process = _process
+                ?? throw new InvalidOperationException("DSO1102 bridge server was not started.");
+
+            using var registration = cancellationToken.Register(TerminateServer);
+
+            await process.StandardInput.WriteLineAsync(command);
+            await process.StandardInput.FlushAsync(cancellationToken);
+
+            var response = await process.StandardOutput.ReadLineAsync(cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                var exit = process.HasExited ? process.ExitCode.ToString() : "(running)";
+                throw new InvalidOperationException(
+                    $"DSO1102 bridge server returned no JSON for '{command}'. ExitCode={exit}. STDERR: {ReadStderr()}");
+            }
+
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(response);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"DSO1102 bridge server returned invalid JSON for '{command}'. STDERR: {ReadStderr()}",
+                    ex);
+            }
+
+            var ok = document.RootElement.TryGetProperty("ok", out var okElement) &&
+                     okElement.ValueKind == JsonValueKind.True;
+
+            if (!ok)
+            {
+                var error = document.RootElement.TryGetProperty("error", out var errorElement)
+                    ? errorElement.GetString()
+                    : null;
+
+                document.Dispose();
+                throw new InvalidOperationException(
+                    $"DSO1102 bridge command '{command}' failed. Error={error ?? "(none)"}. STDERR: {ReadStderr()}");
+            }
+
+            return document;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _gate.WaitAsync();
+
+        try
+        {
+            var process = _process;
+            _process = null;
+
+            if (process is null)
+                return;
+
+            try
+            {
+                if (!process.HasExited)
+                {
+                    await process.StandardInput.WriteLineAsync("quit");
+                    await process.StandardInput.FlushAsync();
+
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    await process.WaitForExitAsync(timeout.Token);
+                }
+            }
+            catch
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+        finally
+        {
+            _gate.Release();
+            _gate.Dispose();
+        }
+    }
+
+    private void EnsureServerStarted()
+    {
+        if (_process is { HasExited: false })
+            return;
+
+        _process?.Dispose();
+        _process = null;
+
+        lock (_stderr)
+            _stderr.Clear();
+
         var startInfo = new ProcessStartInfo
         {
             FileName = _bridgeExe,
             UseShellExecute = false,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
 
-        startInfo.ArgumentList.Add(command);
+        startInfo.ArgumentList.Add("server");
         startInfo.ArgumentList.Add("--dll");
         startInfo.ArgumentList.Add(_vendorDll);
 
-        using var process = new Process { StartInfo = startInfo };
+        var process = new Process
+        {
+            StartInfo = startInfo,
+            EnableRaisingEvents = true
+        };
+
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (string.IsNullOrEmpty(e.Data))
+                return;
+
+            lock (_stderr)
+            {
+                if (_stderr.Length > 16_384)
+                    _stderr.Remove(0, _stderr.Length - 8_192);
+
+                _stderr.AppendLine(e.Data);
+            }
+        };
 
         if (!process.Start())
-            throw new InvalidOperationException("Could not start the x86 DSO1102 bridge.");
-
-        using var registration = cancellationToken.Register(() =>
         {
-            try
-            {
-                if (!process.HasExited)
-                    process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-            }
-        });
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        await process.WaitForExitAsync(cancellationToken);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (string.IsNullOrWhiteSpace(stdout))
-        {
-            throw new InvalidOperationException(
-                $"DSO1102 bridge returned no JSON. ExitCode={process.ExitCode}. STDERR: {stderr}");
+            process.Dispose();
+            throw new InvalidOperationException("Could not start the persistent x86 DSO1102 bridge server.");
         }
 
-        JsonDocument document;
+        process.BeginErrorReadLine();
+        _process = process;
+    }
+
+    private void TerminateServer()
+    {
+        var process = _process;
+        _process = null;
+
+        if (process is null)
+            return;
+
         try
         {
-            document = JsonDocument.Parse(stdout);
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
         }
-        catch (JsonException ex)
+        catch
         {
-            throw new InvalidOperationException(
-                $"DSO1102 bridge returned invalid JSON. ExitCode={process.ExitCode}. STDERR: {stderr}",
-                ex);
         }
-
-        var ok = document.RootElement.TryGetProperty("ok", out var okElement) &&
-                 okElement.ValueKind == JsonValueKind.True;
-
-        if (process.ExitCode != 0 || !ok)
+        finally
         {
-            var error = document.RootElement.TryGetProperty("error", out var errorElement)
-                ? errorElement.GetString()
-                : null;
-
-            document.Dispose();
-            throw new InvalidOperationException(
-                $"DSO1102 bridge command '{command}' failed. ExitCode={process.ExitCode}. " +
-                $"Error={error ?? "(none)"}. STDERR: {stderr}");
+            process.Dispose();
         }
+    }
 
-        return document;
+    private string ReadStderr()
+    {
+        lock (_stderr)
+            return _stderr.ToString();
     }
 
     private static string ResolveBridgeExe(string? configured)
