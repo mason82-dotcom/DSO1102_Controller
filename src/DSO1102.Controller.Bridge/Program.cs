@@ -74,7 +74,7 @@ internal static class Program
                 "capture-gnd" => Fail("capture-gnd v1 is disabled because it used an incorrect vendor ABI. Use capture-gnd-v2 after initializing the known profile in the original application."),
                 "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath, "capture-gnd-v2", groundReference: true),
                 "capture-raw" => CaptureGroundBaselineV2(dllPath, "capture-raw", groundReference: false),
-                "capture-400us" => CaptureGroundBaselineV2(dllPath, "capture-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", expectedSampleRateHz: 2_500_000),
+                "capture-400us" => CaptureGroundBaselineV2(dllPath, "capture-400us", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", expectedSampleRateHz: 5_000_000),
                 "capture-1ms" => CaptureGroundBaselineV2(dllPath, "capture-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", expectedSampleRateHz: 1_000_000),
                 "capture-2ms" => CaptureGroundBaselineV2(dllPath, "capture-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", expectedSampleRateHz: 500_000),
                 "capture-4ms" => CaptureGroundBaselineV2(dllPath, "capture-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", expectedSampleRateHz: 250_000),
@@ -438,6 +438,9 @@ internal static class Program
                 waveformReadValid,
                 allZeroA,
                 allZeroB,
+                decoderLooksSane,
+                adcRangeFractionA,
+                adcRangeFractionB,
                 channelMapping = waveformReadValid
                     ? "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically."
                     : "Not evaluated because both output buffers remained unchanged/all-zero.",
@@ -598,7 +601,22 @@ internal static class Program
         var b = bufferB.Take(verifiedSampleCount).ToArray();
         var allZeroA = a.All(x => x == 0);
         var allZeroB = b.All(x => x == 0);
-        var waveformReadValid = readResult != 0 && !(allZeroA && allZeroB);
+
+        var adcRangeFractionA = a.Count(x => x <= 0x00FF) / (double)a.Length;
+        var adcRangeFractionB = b.Count(x => x <= 0x00FF) / (double)b.Length;
+
+        // A normal vendor-decoded record is byte-range ADC data expanded to
+        // UInt16, with at most a very small number of boundary/sentinel values.
+        // Reject stale/misaligned decoder states that return thousands of
+        // 0xFFxx words even when dsoGetChannelData itself returns success.
+        var decoderLooksSane =
+            adcRangeFractionA >= 0.95 &&
+            adcRangeFractionB >= 0.95;
+
+        var waveformReadValid =
+            readResult != 0 &&
+            !(allZeroA && allZeroB) &&
+            decoderLooksSane;
 
         WriteJson(new
         {
@@ -909,12 +927,25 @@ internal static class Program
             periodCv = periodStdDevSamples.Value / mean;
         }
 
-        // A valid repetitive waveform must have several same-polarity periods
-        // and very low period jitter. This rejects random threshold crossings
-        // on a quiet channel such as CH2.
-        var periodic = allPeriods.Length >= 4 &&
-                       periodCv.HasValue &&
-                       periodCv.Value <= 0.05;
+        // Short high-sample-rate records can contain only about two complete
+        // cycles of the 1 kHz CAL waveform. Accept one period measured from
+        // each edge polarity when both agree and jitter is low. The plateau
+        // population check above still rejects quiet-channel outliers.
+        var hasBothPolarities =
+            risingPeriods.Length >= 1 &&
+            fallingPeriods.Length >= 1;
+
+        var edgePeriodAgreement =
+            hasBothPolarities &&
+            Math.Abs(risingPeriods.Average() - fallingPeriods.Average()) /
+                Math.Max(1.0, meanPeriodSamples ?? 1.0) <= 0.02;
+
+        var periodic =
+            allPeriods.Length >= 2 &&
+            hasBothPolarities &&
+            edgePeriodAgreement &&
+            periodCv.HasValue &&
+            periodCv.Value <= 0.05;
 
         double? estimatedSampleRateAt1kHz =
             periodic && meanPeriodSamples.HasValue
@@ -944,6 +975,7 @@ internal static class Program
             combinedMeanPeriodSamples = meanPeriodSamples,
             combinedPeriodStdDevSamples = periodStdDevSamples,
             combinedPeriodCoefficientOfVariation = periodCv,
+            edgePeriodAgreement,
             ifSignalIs1kHz = new
             {
                 referenceFrequencyHz = 1000,
