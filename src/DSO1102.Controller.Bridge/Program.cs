@@ -222,6 +222,9 @@ internal static class Program
             {
                 rangeCode = i,
                 rangeLabel = verticalRangeLabels[i],
+                rangeLabelEvidence = i is 5 or 6 or 7
+                    ? "DSO-1102 runtime verified"
+                    : "Hantek DSO-2000 family corroborated; DSO-1102 runtime verification pending",
                 start = packedCalibrationWords[i * 2],
                 end = packedCalibrationWords[i * 2 + 1]
             })
@@ -232,6 +235,9 @@ internal static class Program
             {
                 rangeCode = i,
                 rangeLabel = verticalRangeLabels[i],
+                rangeLabelEvidence = i is 5 or 6 or 7
+                    ? "DSO-1102 runtime verified"
+                    : "Hantek DSO-2000 family corroborated; DSO-1102 runtime verification pending",
                 start = packedCalibrationWords[18 + i * 2],
                 end = packedCalibrationWords[18 + i * 2 + 1]
             })
