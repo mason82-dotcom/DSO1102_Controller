@@ -25,6 +25,15 @@ internal static class Program
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate ushort DsoGetCaptureStateDelegate(int deviceIndex, out uint captureValue);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate ushort DsoCaptureStartDelegate(int deviceIndex);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoTriggerEnabledDelegate(int deviceIndex);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoForceTriggerDelegate(int deviceIndex);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryExW(string lpFileName, IntPtr hFile, uint dwFlags);
 
@@ -46,8 +55,10 @@ internal static class Program
             {
                 "probe" => Probe(dllPath),
                 "info" => ReadDeviceInfo(dllPath),
+                "arm" => ArmAndObserve(dllPath, forceTrigger: false),
+                "force" => ArmAndObserve(dllPath, forceTrigger: true),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, exports.")
             };
         }
         catch (Exception ex)
@@ -198,6 +209,79 @@ internal static class Program
             {
                 mode = "read-only",
                 writeConfigurationCallsUsed = false
+            }
+        });
+
+        return 0;
+    }
+
+    private static int ArmAndObserve(string dllPath, bool forceTrigger)
+    {
+        using var library = VendorLibrary.Load(dllPath);
+
+        var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
+        var captureStart = library.GetDelegate<DsoCaptureStartDelegate>("dsoCaptureStart");
+        var triggerEnabled = library.GetDelegate<DsoTriggerEnabledDelegate>("dsoTriggerEnabled");
+        var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
+        var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
+
+        var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
+        if (deviceIndex < 0)
+            return Fail("No DSO-1102 device was found at indices 0..3.");
+
+        var beforeValue = 0u;
+        var beforeState = getCaptureState(deviceIndex, out beforeValue);
+
+        var captureStartResult = captureStart(deviceIndex);
+        var triggerEnabledResult = triggerEnabled(deviceIndex);
+
+        int? forceResult = null;
+        if (forceTrigger)
+            forceResult = force(deviceIndex);
+
+        var samples = new List<object>();
+
+        for (var i = 0; i < 20; i++)
+        {
+            Thread.Sleep(50);
+
+            var triggerValue = 0u;
+            var stateCode = getCaptureState(deviceIndex, out triggerValue);
+
+            samples.Add(new
+            {
+                elapsedMs = (i + 1) * 50,
+                stateCode,
+                stateName = CaptureStateName(stateCode),
+                rawTriggerValue = triggerValue
+            });
+
+            if (stateCode == 2 || stateCode == 127)
+                break;
+        }
+
+        WriteJson(new
+        {
+            ok = true,
+            command = forceTrigger ? "force" : "arm",
+            deviceIndex,
+            before = new
+            {
+                stateCode = beforeState,
+                stateName = CaptureStateName(beforeState),
+                rawTriggerValue = beforeValue
+            },
+            captureStartResult,
+            triggerEnabledResult,
+            forceTriggerResult = forceResult,
+            observations = samples,
+            safety = new
+            {
+                persistentConfigurationChanged = false,
+                calibrationWritten = false,
+                flashWritten = false,
+                deviceIdWritten = false,
+                waveformRead = false
             }
         });
 
