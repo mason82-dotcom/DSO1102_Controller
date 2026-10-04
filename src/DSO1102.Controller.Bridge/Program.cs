@@ -13,6 +13,18 @@ internal static class Program
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int DsoGetFpgaVersionDelegate(int deviceIndex);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DsoGetDeviceIdDelegate(int deviceIndex, out ushort deviceId);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate ushort DsoGetDeviceAddressDelegate(int deviceIndex, out ushort deviceAddress);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate ushort DsoGetChannelLevelDelegate(int deviceIndex, IntPtr values, ushort count);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate ushort DsoGetCaptureStateDelegate(int deviceIndex, out uint captureValue);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryExW(string lpFileName, IntPtr hFile, uint dwFlags);
 
@@ -33,8 +45,9 @@ internal static class Program
             return command switch
             {
                 "probe" => Probe(dllPath),
+                "info" => ReadDeviceInfo(dllPath),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, exports.")
             };
         }
         catch (Exception ex)
@@ -94,6 +107,91 @@ internal static class Program
             dllPath,
             devicePathPattern = @"\\.\D1102-%d",
             devices
+        });
+
+        return 0;
+    }
+
+    private static int ReadDeviceInfo(string dllPath)
+    {
+        using var library = VendorLibrary.Load(dllPath);
+
+        var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
+        var getFpgaVersion = library.GetDelegate<DsoGetFpgaVersionDelegate>("dsoGetFPGAVersion");
+        var getDeviceId = library.GetDelegate<DsoGetDeviceIdDelegate>("dsoGetDeviceID");
+        var getDeviceAddress = library.GetDelegate<DsoGetDeviceAddressDelegate>("dsoGetDeviceAddress");
+        var getChannelLevel = library.GetDelegate<DsoGetChannelLevelDelegate>("dsoGetChannelLevel");
+        var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
+
+        var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
+        if (deviceIndex < 0)
+            return Fail("No DSO-1102 device was found at indices 0..3.");
+
+        var fpgaVersion = getFpgaVersion(deviceIndex);
+
+        var deviceId = (ushort)0;
+        var deviceIdStatus = getDeviceId(deviceIndex, out deviceId);
+
+        var deviceAddress = (ushort)0;
+        var deviceAddressStatus = getDeviceAddress(deviceIndex, out deviceAddress);
+
+        const ushort channelLevelCount = 0x58;
+        var channelLevels = new ushort[channelLevelCount];
+        var levelsHandle = GCHandle.Alloc(channelLevels, GCHandleType.Pinned);
+        ushort channelLevelStatus;
+
+        try
+        {
+            channelLevelStatus = getChannelLevel(
+                deviceIndex,
+                levelsHandle.AddrOfPinnedObject(),
+                channelLevelCount);
+        }
+        finally
+        {
+            levelsHandle.Free();
+        }
+
+        var captureValue = 0u;
+        var captureStatus = getCaptureState(deviceIndex, out captureValue);
+
+        WriteJson(new
+        {
+            ok = true,
+            command = "info",
+            architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+            dllPath,
+            device = new
+            {
+                index = deviceIndex,
+                fpgaVersion,
+                deviceId = new
+                {
+                    callSucceeded = deviceIdStatus != 0,
+                    raw = deviceId
+                },
+                deviceAddress = new
+                {
+                    callSucceeded = deviceAddressStatus != 0,
+                    raw = deviceAddress
+                },
+                channelLevels = new
+                {
+                    callSucceeded = channelLevelStatus != 0,
+                    count = channelLevels.Length,
+                    raw = channelLevels
+                },
+                captureState = new
+                {
+                    status = captureStatus,
+                    rawValue = captureValue
+                }
+            },
+            safety = new
+            {
+                mode = "read-only",
+                writeConfigurationCallsUsed = false
+            }
         });
 
         return 0;
