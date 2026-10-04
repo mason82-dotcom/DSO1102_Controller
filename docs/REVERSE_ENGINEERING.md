@@ -1249,3 +1249,25 @@ enable CH1
 ```
 
 Keep V/div, coupling, timebase, trigger and probe settings unchanged. The candidate export is traced only; it is not invoked by the bridge until its semantics are proven.
+
+
+## _dsoSetChIn@8 is an internal helper, not yet a channel-enable ABI
+
+A runtime trace of `_dsoSetChIn@8` captured 16 completed calls, but every call returned to `0x100053FD`.
+
+The vendor DLL base is `0x10000000`, so the return site is RVA `0x53FD`. This lies inside the already identified `dsoSetTriggerAndSampleRateNew` routine at RVA `0x53B0`.
+
+Observed low-16 argument pairs were:
+
+```text
+call 1:  arg1=0, arg2=0
+calls 2..16: arg1=0, arg2=2
+```
+
+Therefore `_dsoSetChIn@8` is being called internally by the New trigger/sample-rate setter and cannot currently be treated as the application's CH1/CH2 UI enable/disable setter.
+
+The 16-call trace budget was consumed by repeated internal calls before the requested UI toggle sequence could provide distinct evidence.
+
+Do not expose `_dsoSetChIn@8` as a bridge control until its second argument semantics are independently proven.
+
+The actual channel enable/disable state remains unresolved and must be located at the original application's state/call-site level rather than inferred from this internal helper.
