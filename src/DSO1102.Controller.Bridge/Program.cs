@@ -848,7 +848,10 @@ internal static class Program
                         : "Buffer A = CH1, Buffer B = CH2 (confirmed by driven-signal comparison against the grounded baseline)."
                     : "Not evaluated because the vendor call did not populate either buffer.",
                 physicalVoltageConversionApplied = false,
-                vendorCalibrationStateUsed = true
+                vendorCalibrationStateUsed = true,
+                vendorApplicationPostCorrectionApplied = false,
+                sampleDomain = "DSO1102USB.dll decoded ADC counts (nominal 0..255, UInt16 container)",
+                postCorrectionNote = "The original vendor EXE can apply an additional per-channel software gain correction around the channel reference level after dsoGetChannelData. Bridge captures intentionally expose the DLL output before that EXE-only stage."
             },
             safety = new
             {
