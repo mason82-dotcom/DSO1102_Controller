@@ -14,6 +14,28 @@ Windows reported the target unit as:
 
 Do not replace the existing driver with WinUSB/Zadig yet. The original Voltcraft/Hantek software may depend on that driver.
 
+## Verified Windows driver binding
+
+Observed on the target Windows system:
+
+- FriendlyName: DSO1102 USB DRIVER 2
+- Status: OK
+- Class: USB
+- VID/PID: 04B5:1102
+- Manufacturer/Provider: ODM
+- DriverVersion: 0.0.0.0
+- Published INF: oem19.inf
+- Service: DSO11022
+- Class GUID: {79042200-7904-7904-1980-201211191102}
+
+The device manual describes a two-stage driver installation and a Second Development Kit with LabVIEW/VB/VC examples. Therefore the preferred next step is to identify the installed vendor driver binary and any user-mode SDK DLL before considering WinUSB/libusb.
+
+Run:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File .\tools\Probe-DsoDriver.ps1
+~~~
+
 ## Next verification data
 
 Run tools/Probe-UsbDevice.ps1 and capture:
