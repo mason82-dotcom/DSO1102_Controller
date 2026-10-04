@@ -33,6 +33,8 @@ internal static class Program
                 ?? @"C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll";
             var exportName = GetArg(args, "--export") ?? "dsoGetChannelData";
             var argCount = int.TryParse(GetArg(args, "--args"), out var parsed) ? parsed : 8;
+            var maxCalls = int.TryParse(GetArg(args, "--max-calls"), out var parsedMaxCalls) ? parsedMaxCalls : 1;
+            var idleTimeoutMs = int.TryParse(GetArg(args, "--idle-timeout-ms"), out var parsedTimeout) ? parsedTimeout : 30_000;
 
             if (!File.Exists(exePath))
                 throw new FileNotFoundException("Vendor application not found.", exePath);
@@ -40,14 +42,18 @@ internal static class Program
                 throw new FileNotFoundException("Vendor DLL not found.", dllPath);
             if (argCount is < 1 or > 16)
                 throw new ArgumentOutOfRangeException(nameof(argCount), "Argument count must be 1..16.");
+            if (maxCalls is < 1 or > 128)
+                throw new ArgumentOutOfRangeException(nameof(maxCalls), "Max calls must be 1..128.");
+            if (idleTimeoutMs is < 1_000 or > 900_000)
+                throw new ArgumentOutOfRangeException(nameof(idleTimeoutMs), "Idle timeout must be 1000..900000 ms.");
 
             var exportRva = PeExports.GetExportRva(dllPath, exportName);
             if (exportRva == 0)
                 throw new EntryPointNotFoundException($"Export '{exportName}' not found in '{dllPath}'.");
 
-            var result = TraceOneCall(exePath, dllPath, exportName, exportRva, argCount);
+            var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs);
             Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-            return result.Captured ? 0 : 2;
+            return result.Calls.Count > 0 ? 0 : 2;
         }
         catch (Exception ex)
         {
@@ -60,12 +66,14 @@ internal static class Program
         }
     }
 
-    private static TraceResult TraceOneCall(
+    private static TraceSessionResult TraceCalls(
         string exePath,
         string dllPath,
         string exportName,
         uint exportRva,
-        int argCount)
+        int argCount,
+        int maxCalls,
+        int idleTimeoutMs)
     {
         var startup = new STARTUPINFO
         {
@@ -100,15 +108,14 @@ internal static class Program
         bool returnBreakpointInstalled = false;
 
         bool entryCaptured = false;
-        bool captured = false;
         uint[] rawStack = [];
         List<ArgumentSnapshot> snapshots = [];
         string? loadedDll = null;
-        uint? returnEax = null;
+        var calls = new List<CallTrace>();
 
         try
         {
-            while (WaitForDebugEvent(out var debugEvent, 30_000))
+            while (WaitForDebugEvent(out var debugEvent, checked((uint)idleTimeoutMs)))
             {
                 var continueStatus = DbgContinue;
                 var shouldExitLoop = false;
@@ -183,7 +190,9 @@ internal static class Program
                                         Index = i,
                                         Value = value,
                                         Hex = $"0x{value:X8}",
-                                        PointerPreviewHex = TryReadPointerPreview(processInfo.hProcess, value, 128)
+                                        Low16 = (ushort)(value & 0xFFFF),
+                                        PointerPreviewHex = TryReadPointerPreview(processInfo.hProcess, value, 128),
+                                        PointerPreviewWords16 = TryReadPointerWords16(processInfo.hProcess, value, 32)
                                     });
                                 }
 
@@ -230,12 +239,14 @@ internal static class Program
                                 if (!GetThreadContext(thread, ref context))
                                     throw new Win32Exception(Marshal.GetLastWin32Error(), "GetThreadContext failed.");
 
-                                returnEax = context.Eax;
+                                var returnEax = context.Eax;
 
                                 foreach (var snapshot in snapshots)
                                 {
                                     snapshot.PointerPreviewHexAfter =
                                         TryReadPointerPreview(processInfo.hProcess, snapshot.Value, 128);
+                                    snapshot.PointerPreviewWords16After =
+                                        TryReadPointerWords16(processInfo.hProcess, snapshot.Value, 32);
                                     snapshot.ChangedAfterCall =
                                         snapshot.PointerPreviewHex != snapshot.PointerPreviewHexAfter;
                                 }
@@ -248,8 +259,28 @@ internal static class Program
                                 if (!SetThreadContext(thread, ref context))
                                     throw new Win32Exception(Marshal.GetLastWin32Error(), "SetThreadContext failed.");
 
-                                captured = true;
-                                shouldExitLoop = true;
+                                calls.Add(new CallTrace
+                                {
+                                    Sequence = calls.Count + 1,
+                                    ReturnAddress = rawStack.Length > 0 ? $"0x{rawStack[0]:X8}" : null,
+                                    ReturnEax = $"0x{returnEax:X8}",
+                                    Arguments = snapshots
+                                });
+
+                                entryCaptured = false;
+                                rawStack = [];
+                                snapshots = [];
+
+                                if (calls.Count >= maxCalls)
+                                {
+                                    shouldExitLoop = true;
+                                }
+                                else
+                                {
+                                    EnsureWrite(processInfo.hProcess, breakpointAddress, [0xCC]);
+                                    FlushInstructionCache(processInfo.hProcess, breakpointAddress, (UIntPtr)1);
+                                    breakpointInstalled = true;
+                                }
                             }
                             finally
                             {
@@ -313,24 +344,22 @@ internal static class Program
             CloseHandle(processInfo.hProcess);
         }
 
-        return new TraceResult
+        return new TraceSessionResult
         {
-            Ok = captured,
-            EntryCaptured = entryCaptured,
-            Captured = captured,
+            Ok = calls.Count > 0,
             Export = exportName,
             ExportRva = $"0x{exportRva:X8}",
             VendorExe = exePath,
             VendorDll = dllPath,
             LoadedDll = loadedDll,
-            ReturnAddress = rawStack.Length > 0 ? $"0x{rawStack[0]:X8}" : null,
-            ReturnEax = returnEax.HasValue ? $"0x{returnEax.Value:X8}" : null,
-            Arguments = snapshots,
-            Instructions = captured
-                ? "Entry and return captured. Pointer previews show memory before and after the vendor call."
+            RequestedMaxCalls = maxCalls,
+            CapturedCallCount = calls.Count,
+            Calls = calls,
+            Instructions = calls.Count > 0
+                ? $"Captured {calls.Count} completed call(s). Each call includes low-16 scalar values plus pointer previews as bytes and UInt16 words."
                 : entryCaptured
-                    ? "Entry was captured, but the function return was not observed before timeout/process exit."
-                    : "No matching call was captured. Run/acquire a waveform in the vendor application while the tracer is active."
+                    ? "An entry was captured, but its return was not observed before timeout/process exit."
+                    : "No matching call was captured before timeout/process exit."
         };
     }
 
@@ -346,6 +375,25 @@ internal static class Program
 
         var count = Math.Min(length, read.ToInt32());
         return Convert.ToHexString(bytes.AsSpan(0, count));
+    }
+
+    private static ushort[]? TryReadPointerWords16(IntPtr process, uint value, int wordCount)
+    {
+        if (value < 0x00010000 || value >= 0xFFF00000)
+            return null;
+
+        var bytes = new byte[wordCount * 2];
+        if (!ReadProcessMemory(process, new IntPtr(unchecked((int)value)), bytes, bytes.Length, out var read) ||
+            read.ToInt64() < 2)
+            return null;
+
+        var actualWords = Math.Min(wordCount, read.ToInt32() / 2);
+        var words = new ushort[actualWords];
+
+        for (var i = 0; i < actualWords; i++)
+            words[i] = BitConverter.ToUInt16(bytes, i * 2);
+
+        return words;
     }
 
     private static string? TryGetFileNameFromHandle(IntPtr handle)
@@ -575,20 +623,26 @@ internal static class Program
         public static CONTEXT32 Create() => default;
     }
 
-    private sealed class TraceResult
+    private sealed class TraceSessionResult
     {
         public bool Ok { get; init; }
-        public bool EntryCaptured { get; init; }
-        public bool Captured { get; init; }
         public string Export { get; init; } = "";
         public string ExportRva { get; init; } = "";
         public string VendorExe { get; init; } = "";
         public string VendorDll { get; init; } = "";
         public string? LoadedDll { get; init; }
+        public int RequestedMaxCalls { get; init; }
+        public int CapturedCallCount { get; init; }
+        public List<CallTrace> Calls { get; init; } = [];
+        public string Instructions { get; init; } = "";
+    }
+
+    private sealed class CallTrace
+    {
+        public int Sequence { get; init; }
         public string? ReturnAddress { get; init; }
         public string? ReturnEax { get; init; }
         public List<ArgumentSnapshot> Arguments { get; init; } = [];
-        public string Instructions { get; init; } = "";
     }
 
     private sealed class ArgumentSnapshot
@@ -596,8 +650,11 @@ internal static class Program
         public int Index { get; init; }
         public uint Value { get; init; }
         public string Hex { get; init; } = "";
+        public ushort Low16 { get; init; }
         public string? PointerPreviewHex { get; init; }
+        public ushort[]? PointerPreviewWords16 { get; init; }
         public string? PointerPreviewHexAfter { get; set; }
+        public ushort[]? PointerPreviewWords16After { get; set; }
         public bool? ChangedAfterCall { get; set; }
     }
 
