@@ -1,10 +1,10 @@
 param(
-    [string]$Vid = '04B5',
-    [string]$Pid = '1102'
+    [string]$VendorId = '04B5',
+    [string]$ProductId = '1102'
 )
 
 $ErrorActionPreference = 'Stop'
-$needle = "VID_$Vid&PID_$Pid"
+$needle = "VID_$VendorId&PID_$ProductId"
 
 Write-Host "DSO1102 USB/PnP probe" -ForegroundColor Cyan
 Write-Host "Target: USB\$needle" -ForegroundColor Cyan
