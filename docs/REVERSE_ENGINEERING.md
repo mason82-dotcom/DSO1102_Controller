@@ -515,3 +515,28 @@ CAL signal period      = ~999.79 samples
 ```
 
 The goal is to recover the actual vendor lookup table rather than infer every mode from the nominal front-panel setting.
+
+
+## Multi-call trace result for dsoSetTriggerAndSampleRateNew
+
+A real eight-call trace of `dsoSetTriggerAndSampleRateNew` completed successfully, but all captured calls carried the same argument-3 configuration prefix:
+
+```text
+word[0] = 0
+word[1] = 0
+word[2] = 15
+word[3] = 50
+word[4] = 0
+word[5] = 0
+```
+
+The calls came from two original-application return sites:
+
+```text
+0x004536B1
+0x004539C0
+```
+
+Arguments 4..7 were zero and argument 8 was 2 in every captured call. The first eight calls were therefore dominated by initialization/refresh activity and did not expose the intended sequence of UI time-base changes.
+
+This result also means that `word[2]` must not yet be labeled as the time-base code solely from the New-setter trace. The next step is to trace the three-argument legacy export `dsoSetTriggerAndSampleRate`, where static DLL analysis already showed direct construction of the sample-rate/trigger command.
