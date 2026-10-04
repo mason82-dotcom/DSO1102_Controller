@@ -247,3 +247,49 @@ Important observations:
 - arg8 is another pointer and remained zero-filled at entry.
 
 The previously guessed bridge signature is therefore not valid. Direct waveform reads are disabled until a return-side trace confirms which pointer arguments are modified by the vendor DLL and what EAX returns.
+
+
+## Corrected dsoGetChannelData ABI
+
+A return-side trace plus the original application's call site at `0x00453AC2` resolved the eight arguments.
+
+The apparent upper 16 bits seen in some runtime argument values are register residue: the vendor application loads only 16-bit words into the low half of the register before the 32-bit x86 stack push. Only the low 16 bits are semantically meaningful for arguments 1, 7 and 8.
+
+For the traced call:
+
+```text
+arg1 low16 = 0     -> device index
+arg2       = pointer to waveform buffer A
+arg3       = pointer to waveform buffer B
+arg4       = pointer to trigger/sample configuration at object +0x2A
+arg5       = pointer to offset/calibration state at object +0x36
+arg6       = trigger/capture value from object +0x15C
+arg7 low16 = 1     -> calibration A from object +0x152
+arg8 low16 = 12    -> calibration B from object +0x154
+```
+
+The original application populates object +0x152/+0x154 through:
+
+```text
+dsoGetCalData(deviceIndex, &calibrationA, &calibrationB)
+```
+
+and object +0x15C through:
+
+```text
+dsoGetCaptureState(deviceIndex, &triggerValue)
+```
+
+The two waveform buffers are conclusively verified: they were all-zero at function entry and contained decoded 16-bit samples at function return. The traced return value was `EAX=1`.
+
+The trigger/sample structure passed as argument 4 begins with the five 16-bit words:
+
+```text
+0, 2, 12, 50, 0
+```
+
+for the agreed CH1-GND test profile. Argument 5 points exactly six words (12 bytes) later.
+
+For this same profile, the original application takes the `0x2800` branch after the vendor call, confirming 10,240 processed samples per channel for this capture mode.
+
+The bridge command `capture-gnd-v2` reproduces this traced ABI while still avoiding all persistent calibration, flash and device-ID writes.
