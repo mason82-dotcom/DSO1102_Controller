@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('probe','info','arm','force','capture-gnd','capture-gnd-v2','exports')]
+    [ValidateSet('probe','info','arm','force','capture-gnd','capture-gnd-v2','capture-raw','exports')]
     [string]$Command = 'probe',
     [string]$DllPath = 'C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll'
 )
