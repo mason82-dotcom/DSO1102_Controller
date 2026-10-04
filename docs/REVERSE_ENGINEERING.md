@@ -1614,3 +1614,63 @@ The family offset algorithm linearly interpolates between the two calibration en
 This provides a strong explanation for why `dsoSetOffset` depends on both the selected range and the channel-level EEPROM/calibration data.
 
 The exact DSO-1102 word ordering within 0..35 (channel-major vs. range-major and endpoint order) still requires direct runtime correlation and must not be assumed solely from family source code.
+
+
+## Correct DSO-2250 channel-mode encoding
+
+Historical OpenHantek source contains a DSO-2250-specific enum:
+
+```text
+BUSED_CH1    = 0
+BUSED_NONE   = 1
+BUSED_CH1CH2 = 2
+BUSED_CH2    = 3
+```
+
+This differs from the generic DSO-2090/2150 channel enum, where CH2-only uses value 1.
+
+A historical commit titled `DSO-2250 channel fix` explicitly notes that the DSO-2250 uses a different value for channel 2 and fixes the code path to use the DSO-2250-specific channel command.
+
+This resolves the ambiguity seen in newer libsigrok source comments.
+
+The DSO-1102 runtime trace already observed:
+
+```text
+_dsoSetChIn arg2 = 0 while CH1 only was enabled
+_dsoSetChIn arg2 = 2 after CH2 was enabled while CH1 remained enabled
+```
+
+These values exactly match the DSO-2250-specific mapping.
+
+Therefore the strongest current hypothesis for DSO-1102 is:
+
+```text
+0 = CH1 only          [runtime observed]
+1 = no channels       [family-confirmed, DSO-1102 not yet observed]
+2 = CH1 + CH2         [runtime observed]
+3 = CH2 only          [family-confirmed, DSO-1102 not yet observed]
+```
+
+The remaining direct verification is to capture value 3 by starting with both channels active and then disabling CH1 while keeping CH2 active.
+
+## Offset calibration formula from historical Hantek source
+
+Historical OpenHantek code calculates vertical channel offset from the two range-specific calibration endpoints:
+
+```text
+minimum = big_endian_u16(OFFSET_START)
+maximum = big_endian_u16(OFFSET_END)
+
+offsetValue =
+    normalizedPosition * (maximum - minimum)
+    + minimum
+    + 0.5
+```
+
+where `normalizedPosition` is in the range 0.0 .. 1.0.
+
+A historical bugfix in `Control::setOffset` specifically corrected the high byte of `maximum` to come from `OFFSET_END`, confirming that START and END are separate big-endian 16-bit calibration values.
+
+This is strong family-level evidence for interpreting the DSO-1102 channel-level block as two endpoint values per channel/per V-div range.
+
+For the DSO-1102, the exact six-argument `dsoSetOffset` wrapper ABI is still to be recovered by runtime trace before the bridge invokes it.
