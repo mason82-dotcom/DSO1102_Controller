@@ -446,7 +446,7 @@ internal static class Program
             return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
 
         const int analysisSampleCount = 30_000;
-        const int guardBufferSamples = 524_288;
+        const int guardBufferSamples = 1_048_576;
 
         // The vendor DLL uses two six-word configuration blocks while decoding data.
         // These conservative values match the already initialized CH1 / 1 ms/div /
@@ -698,7 +698,7 @@ internal static class Program
         Array.Copy(channelLevels, 0, vendorState, 23, channelLevels.Length);
 
         const int verifiedSampleCount = 0x2800;
-        const int guardBufferSamples = 524_288;
+        const int guardBufferSamples = 1_048_576;
 
         var bufferA = new ushort[guardBufferSamples];
         var bufferB = new ushort[guardBufferSamples];
@@ -843,9 +843,17 @@ internal static class Program
 
     private static object SummarizeFullBuffer(ushort[] buffer)
     {
-        var adc = buffer.Where(x => x <= 0x00FF).ToArray();
-        var excluded = buffer.Length - adc.Length;
-        var adcFraction = adc.Length / (double)buffer.Length;
+        var lastNonZeroIndex = Array.FindLastIndex(buffer, x => x != 0);
+        var populatedPrefixEstimate = lastNonZeroIndex >= 0 ? lastNonZeroIndex + 1 : 0;
+        var analyzed = populatedPrefixEstimate > 0
+            ? buffer.Take(populatedPrefixEstimate).ToArray()
+            : Array.Empty<ushort>();
+
+        var adc = analyzed.Where(x => x <= 0x00FF).ToArray();
+        var excluded = analyzed.Length - adc.Length;
+        var adcFraction = analyzed.Length > 0
+            ? adc.Length / (double)analyzed.Length
+            : 0.0;
 
         object? timing = null;
         object? plateaus = null;
@@ -856,16 +864,17 @@ internal static class Program
             timing = AnalyzeSquareWaveTiming(adc);
         }
 
-        var tailStart = Math.Max(0, buffer.Length - 64);
+        var tailStart = Math.Max(0, analyzed.Length - 64);
 
         return new
         {
-            count = buffer.Length,
+            allocatedCount = buffer.Length,
+            populatedPrefixEstimate,
             adc8ValidCount = adc.Length,
             excludedCount = excluded,
             adc8Fraction = adcFraction,
-            first16 = buffer.Take(16).ToArray(),
-            last64 = buffer.Skip(tailStart).Take(64).ToArray(),
+            first16 = analyzed.Take(16).ToArray(),
+            last64 = analyzed.Skip(tailStart).Take(64).ToArray(),
             twoPlateauAnalysis = plateaus,
             squareWaveTiming = timing
         };
