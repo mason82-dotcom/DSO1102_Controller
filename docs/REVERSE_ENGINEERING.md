@@ -1212,3 +1212,40 @@ Because enabling CH2 caused a `dsoSetVoltageAndCoupling` call, the vendor applic
 
 Therefore, CH2 enabled/disabled state must not be inferred from `dsoSetVoltageAndCoupling` alone. The actual channel-enable control is still to be located in another setter/state path before the bridge exposes channel enable/disable.
 
+
+
+## Channel enable remains a separate control path
+
+Operator clarification for the CH2 analog trace: the first observed `dsoSetVoltageAndCoupling` call was triggered by enabling CH2.
+
+That call carried the same range/coupling-shaped scalar fields used by ordinary analog updates. Therefore the voltage/coupling export is re-applied when a channel is enabled, but no independent enable bit has yet been identified in its six scalar arguments.
+
+A read-only runtime trace mode is available for the candidate internal export:
+
+```text
+_dsoSetChIn@8
+```
+
+Use:
+
+```powershell
+powershell -ExecutionPolicy Bypass \
+  -File .\tools\Trace-AnalogConfig.ps1 \
+  -Mode channel \
+  -MaxCalls 16 \
+  -IdleTimeoutMs 30000 \
+  -TotalTimeoutMs 120000
+```
+
+Recommended sequence:
+
+```text
+start: CH1 enabled, CH2 disabled
+enable CH2
+disable CH2
+enable CH2
+disable CH1
+enable CH1
+```
+
+Keep V/div, coupling, timebase, trigger and probe settings unchanged. The candidate export is traced only; it is not invoked by the bridge until its semantics are proven.
