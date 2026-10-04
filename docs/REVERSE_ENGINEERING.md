@@ -1013,3 +1013,33 @@ configurationSetter
 ```
 
 This is not yet a complete independent device initialization. Analog input range/coupling, offset and filtering remain whatever state is already active in the device. The purpose of this probe is only to prove that the traced time-base setter can be invoked safely and produce a readable acquisition without using the vendor UI for that specific time-base operation.
+
+
+## Analog configuration tracing
+
+The remaining transient analog setup must be recovered from the vendor application before the bridge writes those settings itself.
+
+The helper:
+
+```text
+tools/Trace-AnalogConfig.ps1
+```
+
+supports the two exports whose six-slot stdcall ABI is already established statically:
+
+```text
+-Mode voltage -> dsoSetVoltageAndCoupling
+-Mode offset  -> dsoSetOffset
+```
+
+Example:
+
+```powershell
+powershell -ExecutionPolicy Bypass \
+  -File .\tools\Trace-AnalogConfig.ps1 \
+  -Mode voltage \
+  -MaxCalls 16 \
+  -TotalTimeoutMs 120000
+```
+
+The tracer only observes calls made by the original application. It does not invoke these setters itself.
