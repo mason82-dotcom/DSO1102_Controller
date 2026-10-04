@@ -956,3 +956,60 @@ decoded record span   ~= 104.88 ms/channel
 ```
 
 Codes 15, 16, 17 and 18 are therefore all verified to use the same approximately 5 MS/s, 512 KiSample/channel decoded acquisition stream. In this range, Time/div changes are downstream viewport/rendering behavior rather than changes in decoded sample clock or decoded record depth.
+
+
+## Guarded time-base self-initialization probe
+
+After full-buffer verification of time-base codes 15..18, the bridge adds one deliberately narrow transient configuration test:
+
+```text
+self-init-400us
+```
+
+This command calls only the runtime-traced `dsoSetTriggerAndSampleRateNew` export. It does not call voltage/coupling, offset, filter, calibration, flash, device-ID or device-address setters.
+
+The verified setter ABI used by the test is:
+
+```text
+arg1 = device index (0)
+arg2 = 0
+arg3 = pointer to vendor state
+arg4 = 0
+arg5 = 0
+arg6 = 0
+arg7 = 0
+arg8 = 2
+```
+
+For 400 us/div, the runtime-traced state prefix is:
+
+```text
+0, 0, 15, 50, 5, 0,
+127, 192, 124, 192, 128, 0, 0, 256,
+0, 0, 0, 0, 0, 0, 0, 0, 16368
+```
+
+The live 88-byte channel-level calibration table is appended at word 23 exactly as observed in the vendor process.
+
+The command sequence is:
+
+```text
+dsoCaptureStart
+dsoSetTriggerAndSampleRateNew
+dsoTriggerEnabled
+dsoForceTrigger
+poll dsoGetCaptureState until state 3
+dsoGetChannelData
+```
+
+The JSON explicitly reports:
+
+```text
+selfInitializedTimeBase
+timeBaseSetterResult
+transientTimeBaseConfigurationChanged
+configurationSettersCalled
+configurationSetter
+```
+
+This is not yet a complete independent device initialization. Analog input range/coupling, offset and filtering remain whatever state is already active in the device. The purpose of this probe is only to prove that the traced time-base setter can be invoked safely and produce a readable acquisition without using the vendor UI for that specific time-base operation.
