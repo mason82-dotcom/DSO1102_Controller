@@ -793,7 +793,7 @@ internal static class Program
                 decodedOutputReferenceRateHz,
                 calReferencedEffectiveAcquisitionRateHz = decodedOutputReferenceRateHz,
                 decodedOutputRateMeaning = "Rate inferred from sample spacing in the deinterleaved hardware-transfer stream. Static dsoGetChannelData analysis shows no time-axis interpolation for the characterized Time/DIV>=10 deep-memory path; the ADC core clock may still be higher if hardware decimation is active.",
-                hardwareSamplerateProgramming = DescribeHardwareSamplerateProgramming(timeBaseCode),
+                hardwareSamplerateProgramming = DescribeHardwareSamplerateProgramming(timeBaseCode, tracedPrefix[4], tracedPrefix[6]),
                 decodedRecordDepthProgramming = new
                 {
                     stateWord10 = tracedPrefix[10],
@@ -876,54 +876,178 @@ internal static class Program
         _ => $"Unknown ({code})"
     };
 
-    private static object? DescribeHardwareSamplerateProgramming(ushort? timeBaseCode)
+    private static object? DescribeHardwareSamplerateProgramming(
+        ushort? timeBaseCode,
+        ushort recordLengthStateRaw,
+        ushort samplerateStateWord6Raw)
     {
         if (!timeBaseCode.HasValue)
             return null;
 
-        // Directly decoded from DSO1102USB.dll _dsoSetSampleRate@8 for the
-        // normal traced setter-state branch (config word[4] != 0).
-        //
-        // The 16-bit values are one's-complement downsampler words. Historical
-        // Hantek DSO-2250 protocol documentation defines:
-        //   divider = (~word & 0xffff) + 2
-        //
-        // The DSO-1102 command contains two such timing words. Their exact
-        // hardware roles in this DLL revision are not yet runtime-proven, so
-        // expose the raw words/dividers without pretending either one is the
-        // decoded output-array rate.
-        (ushort primary, ushort secondary)? words = timeBaseCode.Value switch
+        var code = timeBaseCode.Value;
+        var deepRecordState = recordLengthStateRaw != 0;
+
+        static string? TimeBaseLabel(ushort value) => value switch
         {
-            15 => (0xFFED, 0xFFF7),
-            16 => (0xFFD9, 0xFFED),
-            17 => (0xFF9D, 0xFFCF),
-            18 => (0xFF39, 0xFF9D),
+            0 => "4 ns/div",
+            1 => "10 ns/div",
+            2 => "20 ns/div",
+            3 => "40 ns/div",
+            4 => "100 ns/div",
+            5 => "200 ns/div",
+            6 => "400 ns/div",
+            7 => "1 us/div",
+            8 => "2 us/div",
+            9 => "4 us/div",
+            10 => "10 us/div",
+            11 => "20 us/div",
+            12 => "40 us/div",
+            13 => "100 us/div",
+            14 => "200 us/div",
+            15 => "400 us/div",
+            16 => "1 ms/div",
+            17 => "2 ms/div",
+            18 => "4 ms/div",
+            19 => "10 ms/div",
+            20 => "20 ms/div",
+            21 => "40 ms/div",
+            22 => "100 ms/div",
+            23 => "200 ms/div",
+            24 => "400 ms/div",
+            25 => "1 s/div",
+            26 => "2 s/div",
+            27 => "4 s/div",
+            28 => "10 s/div",
+            29 => "20 s/div",
+            30 => "40 s/div",
+            31 => "1 min/div",
+            32 => "2 min/div",
+            33 => "4 min/div",
+            34 => "10 min/div",
+            35 => "20 min/div",
+            36 => "40 min/div",
+            37 => "1 h/div",
             _ => null
         };
 
-        if (!words.HasValue)
+        // Tuple fields are taken directly from the _dsoSetSampleRate@8 jump table.
+        // baseControlBits are command-byte-2 bits 0..2 before config.word[6].bit0
+        // is inserted as command-byte-2 bit 3.
+        (ushort primary, ushort secondary, byte baseControlBits)? programming =
+            (code, deepRecordState) switch
+            {
+                (<= 9, _) => (0x0000, 0x0000, 0x05),
+                (10, _) => (0x0000, 0x0000, 0x07),
+                (11, _) => (0xFFFF, 0x0001, 0x06),
+
+                (12, false) => (0xFFFD, 0xFFFF, 0x02),
+                (12, true) => (0xFFFF, 0xFFFF, 0x07),
+
+                (13, false) => (0xFFF7, 0xFFFC, 0x02),
+                (13, true) => (0xFFFD, 0xFFFF, 0x02),
+
+                (14, false) => (0xFFED, 0xFFF7, 0x06),
+                (14, true) => (0xFFF7, 0xFFFC, 0x06),
+
+                (15, false) => (0xFFD9, 0xFFED, 0x02),
+                (15, true) => (0xFFED, 0xFFF7, 0x02),
+
+                (16, false) => (0xFF9D, 0xFFCF, 0x02),
+                (16, true) => (0xFFD9, 0xFFED, 0x02),
+
+                (17, false) => (0xFF39, 0xFF9D, 0x02),
+                (17, true) => (0xFF9D, 0xFFCF, 0x02),
+
+                (18, false) => (0xFE71, 0xFF39, 0x02),
+                (18, true) => (0xFF39, 0xFF9D, 0x02),
+
+                (19, false) => (0xFC19, 0xFE0D, 0x02),
+                (19, true) => (0xFE71, 0xFF39, 0x02),
+
+                (20, false) => (0xF83E, 0xFC19, 0x02),
+                (20, true) => (0xFC1A, 0xFE0D, 0x02),
+
+                (21, false) => (0xF06E, 0xF83E, 0x02),
+                (21, true) => (0xF83E, 0xFC1A, 0x02),
+
+                (22, false) => (0xD8CC, 0xEC7A, 0x02),
+                (22, true) => (0xF06E, 0xF83E, 0x02),
+
+                (23, false) => (0xAFC8, 0xD8CC, 0x02),
+                (23, true) => (0xD8CC, 0xD8CC, 0x02),
+
+                (24, false) => (0x639C, 0xD8CC, 0x02),
+                (24, true) => (0xB1BC, 0xD8CC, 0x02),
+
+                (25, _) => (0xAFC8, 0xD8CC, 0x02),
+                (>= 26 and <= 37, _) => (0xFFED, 0xD8CC, 0x02),
+                _ => null
+            };
+
+        if (!programming.HasValue)
             return new
             {
                 source = "DSO1102USB.dll _dsoSetSampleRate@8",
-                verifiedForThisProfile = false,
-                note = "Hardware timing words have not yet been promoted for this Time/DIV code."
+                staticallyDecoded = false,
+                timeBaseCode = code,
+                timeBaseLabel = TimeBaseLabel(code),
+                note = "Time/DIV code is outside the statically decoded 0..37 switch."
             };
 
-        static int Divider(ushort value) => ((~value) & 0xFFFF) + 2;
+        static int? EncodedDivider(ushort value) =>
+            value == 0 ? null : 0x10001 - value;
 
-        var pair = words.Value;
+        var p = programming.Value;
+        var primaryDivider = EncodedDivider(p.primary);
+        var secondaryMechanicalDivider = EncodedDivider(p.secondary);
+        var commandByte2 = (byte)(p.baseControlBits | ((samplerateStateWord6Raw & 1) << 3));
+
+        // OpenHantek's DSO-2250 path independently uses command 0x0E,
+        // byte2.bit0=fast-rate, byte2.bit1=downsampling and
+        // samplerateWord = 0x10001 - divider. That makes the primary word a
+        // strong family-correlated downsampler candidate. The DSO-1102's
+        // second timing word has no public DSO-2250 counterpart.
+        double? familyCorrelatedRateCandidateHz = null;
+        if (deepRecordState &&
+            code is >= 13 and <= 24 &&
+            primaryDivider is > 0 &&
+            (commandByte2 & 0x01) == 0 &&
+            (commandByte2 & 0x02) != 0)
+        {
+            familyCorrelatedRateCandidateHz = 100_000_000.0 / primaryDivider.Value;
+        }
+
         return new
         {
-            source = "Direct static disassembly of DSO1102USB.dll _dsoSetSampleRate@8, normal config word[4] != 0 branch.",
-            verifiedForThisProfile = true,
+            source = "Direct static disassembly of DSO1102USB.dll _dsoSetSampleRate@8.",
+            openHantekCorrelation = "DSO-2250 uses 0x0E, bit0 fast-rate, bit1 downsampling, and samplerateWord = 0x10001 - divider.",
+            staticallyDecoded = true,
+            runtimeWaveformVerifiedOnThisDso1102 = code is >= 15 and <= 18,
+            timeBaseCode = code,
+            timeBaseLabel = TimeBaseLabel(code),
+            recordStateBranch = deepRecordState ? "config.word[4] != 0" : "config.word[4] == 0",
+            recordLengthStateRaw,
+            samplerateStateWord6Raw,
             commandByte = "0x0E",
-            flagsByteForTracedState = "0x0A",
-            primaryDownsamplerWord = $"0x{pair.primary:X4}",
-            primaryDivider = Divider(pair.primary),
-            secondaryDownsamplerWord = $"0x{pair.secondary:X4}",
-            secondaryDivider = Divider(pair.secondary),
-            formula = "divider = (~word & 0xFFFF) + 2",
-            note = "The two hardware timing fields change with Time/DIV even when the vendor-decoded output array remains near 5 MSamples/s. Their exact physical clock roles remain to be runtime-correlated."
+            commandByte2 = $"0x{commandByte2:X2}",
+            commandByte2Bits = new
+            {
+                bit0FamilyCorrelatedFastRate = (commandByte2 & 0x01) != 0,
+                bit1FamilyCorrelatedDownsampling = (commandByte2 & 0x02) != 0,
+                bit2Dso1102Specific = (commandByte2 & 0x04) != 0,
+                bit3FromConfigWord6Bit0 = (commandByte2 & 0x08) != 0
+            },
+            primaryTimingWord = $"0x{p.primary:X4}",
+            primaryEncodedDivider = primaryDivider,
+            primaryDividerFormula = p.primary == 0 ? null : "0x10001 - primaryTimingWord",
+            secondaryTimingWord = $"0x{p.secondary:X4}",
+            secondaryMechanicalComplementValue = secondaryMechanicalDivider,
+            secondaryMeaning = "DSO-1102/vendor-DLL-specific. No matching second timing word exists in OpenHantek's public 8-byte DSO-2250 0x0E structure.",
+            familyCorrelatedHardwareRateCandidateHz,
+            familyCorrelatedHardwareRateCandidateMeaning = familyCorrelatedHardwareRateCandidateHz.HasValue
+                ? "Candidate only: assumes the DSO-2250 normal-mode 100 MHz base clock applies to this DSO-1102 profile. Not yet a runtime-measured DSO-1102 rate."
+                : null,
+            note = "Keep this hardware-programming domain separate from the CAL-referenced effective rate measured in the transferred/deinterleaved sample stream."
         };
     }
 
