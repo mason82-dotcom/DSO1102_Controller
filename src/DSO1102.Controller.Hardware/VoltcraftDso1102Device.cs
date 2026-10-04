@@ -27,40 +27,48 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
 
         var bridge = new BridgeProcessClient();
 
-        using var probe = await bridge.RunAsync("probe", cancellationToken);
-        var root = probe.RootElement;
-
-        if (!root.TryGetProperty("devices", out var devices) ||
-            devices.ValueKind != JsonValueKind.Array)
+        try
         {
-            throw new InvalidOperationException("DSO1102 bridge probe did not return a devices array.");
-        }
+            using var probe = await bridge.RunAsync("probe", cancellationToken);
+            var root = probe.RootElement;
 
-        JsonElement? connected = null;
-        foreach (var item in devices.EnumerateArray())
-        {
-            if (item.TryGetProperty("present", out var present) &&
-                present.ValueKind == JsonValueKind.True)
+            if (!root.TryGetProperty("devices", out var devices) ||
+                devices.ValueKind != JsonValueKind.Array)
             {
-                connected = item;
-                break;
+                throw new InvalidOperationException("DSO1102 bridge probe did not return a devices array.");
             }
+
+            JsonElement? connected = null;
+            foreach (var item in devices.EnumerateArray())
+            {
+                if (item.TryGetProperty("present", out var present) &&
+                    present.ValueKind == JsonValueKind.True)
+                {
+                    connected = item;
+                    break;
+                }
+            }
+
+            if (!connected.HasValue)
+                throw new InvalidOperationException("No DSO-1102 device was found by the original vendor DLL.");
+
+            string? firmware = null;
+            if (connected.Value.TryGetProperty("fpgaVersion", out var fpga) &&
+                fpga.ValueKind == JsonValueKind.Number &&
+                fpga.TryGetInt32(out var fpgaVersion))
+            {
+                firmware = $"FPGA {fpgaVersion}";
+            }
+
+            _bridge = bridge;
+            DeviceInfo = DeviceInfo with { Firmware = firmware };
+            IsConnected = true;
         }
-
-        if (!connected.HasValue)
-            throw new InvalidOperationException("No DSO-1102 device was found by the original vendor DLL.");
-
-        string? firmware = null;
-        if (connected.Value.TryGetProperty("fpgaVersion", out var fpga) &&
-            fpga.ValueKind == JsonValueKind.Number &&
-            fpga.TryGetInt32(out var fpgaVersion))
+        catch
         {
-            firmware = $"FPGA {fpgaVersion}";
+            await bridge.DisposeAsync();
+            throw;
         }
-
-        _bridge = bridge;
-        DeviceInfo = DeviceInfo with { Firmware = firmware };
-        IsConnected = true;
     }
 
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)
