@@ -2031,48 +2031,47 @@ A fresh pass over the original EXE's `GetProcAddress` initialization resolved an
 
 `dsoGetLogicData` at RVA `0x5980` is a trivial stub in this DLL revision: it returns success without a hardware transaction.
 
-## UI channel state versus fast-sampling channel mode
+## Channel UI-state object fields and filter path
 
-The original application's per-channel state object contains three relevant fields:
+A fresh cross-reference pass corrected an earlier misidentification of the per-channel state fields.
 
-```text
-+0x0C : 32-bit 0/1 state toggled by the channel UI
-+0x14 : 16-bit coupling selection
-+0x18 : 16-bit V/div range code
-```
+The original application initializes the two analog-channel objects with `+0x08 = 1` and exposes UI handlers that toggle this field independently. This is the channel On/Off / visibility state.
 
-The common analog-state wrapper calls:
+The relevant channel-object fields are now:
 
 ```text
-dsoSetFiltAndVoltageData(
-    device,
-    channelStateA,
-    channelStateB,
-    channel1Range,
-    channel2Range)
-
-dsoSetVoltageAndCoupling(
-    device,
-    channel1Range,
-    channel2Range,
-    channel1Coupling,
-    channel2Coupling,
-    triggerSelector)
++0x08 : channel On/Off / visibility state
++0x0C : hardware filter / bandwidth-limit state
++0x10 : separate software-side boolean, consistent with Invert
++0x14 : coupling selection
++0x16 : probe/range-associated UI state
++0x18 : V/div range code
++0x1A : additional multi-state filter/UI field
 ```
 
-The two `+0x0C` fields are changed by UI handlers using an explicit 0/1 toggle and are passed only through `dsoSetFiltAndVoltageData`.
+The strongest hardware evidence concerns `+0x0C`: the common acquisition-configuration path feeds the two channel values directly into `dsoSetFilt` and `dsoSetFiltAndVoltageData`. The trigger object's separate boolean is fed into the third `dsoSetFilt` slot and corresponds to the UI resource `HF Rejection`.
 
-This is a different mechanism from `_dsoSetChIn@8`, which `dsoSetTriggerAndSampleRateNew` forces to hardware mode 2 for Time/DIV codes >=10.
+Static call-site reconstruction therefore predicts:
 
-Therefore normal UI channel enable/disable must be reconstructed from `dsoSetFiltAndVoltageData`, while `_dsoSetChIn@8` is reserved for the high-speed acquisition topology.
+```text
+dsoSetFilt(
+    device,
+    CH1 bandwidth/filter flag,
+    CH2 bandwidth/filter flag,
+    trigger HF-rejection flag)
+```
 
-A dedicated observational trace is available as:
+The DLL packs those three low bits directly into command `0x00 0x0F` byte 2.
+
+A dedicated observational trace is now exposed as:
 
 ```powershell
-.\tools\Trace-AnalogConfig.ps1 -Mode enable
+.\tools\Trace-AnalogConfig.ps1 -Mode filter
 ```
 
-Static analysis establishes that arguments 4 and 5 are the CH1/CH2 V/div range codes. Runtime tracing is still required to prove whether argument 2 or 3 corresponds to CH1 and to establish the exact 0/1 polarity.
+The previously added `-Mode enable` interpretation was removed before being used for hardware control because the `+0x0C` fields are not the channel On/Off state.
+
+Channel On/Off is separate from the fast-sampling helper `_dsoSetChIn@8`. At slow Time/DIV codes the hardware helper is forced to mode 2, while the application may still hide one channel in its UI. At fast Time/DIV codes 0..9, the acquisition topology can instead depend on the channel-selection state encoded in the trigger/sample configuration structure.
 
 ## GND coupling is implemented in software
 
