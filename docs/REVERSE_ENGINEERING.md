@@ -1340,3 +1340,55 @@ External NI evidence therefore reinforces the following current design decisions
 6. Treat normal waveform data as 8-bit ADC samples expanded into larger host types.
 7. Do not guess record size or blindly enlarge buffers without runtime verification.
 ```
+
+
+## NI/Hantek evidence for 512K deep-memory lineage
+
+Additional external evidence strengthens the interpretation of the vendor DLL's DSO2250 lineage.
+
+A Hantek DSO-2000 family datasheet lists DSO-2250, DSO-2150 and DSO-2090 together and specifies:
+
+```text
+vertical resolution: 8 bit
+gain range:          10 mV/div .. 5 V/div, 9 steps
+time-base range:     4 ns .. 1 h, 38 steps
+coupling:            AC / DC / GND
+```
+
+Most importantly, the documented acquisition depths are:
+
+```text
+DSO-2250: 10K .. 512K samples/channel
+DSO-2150: 10K .. 512K samples/channel
+DSO-2090: 10K .. 32K samples/channel
+```
+
+This independently matches the DSO1102_Controller runtime observation that `dsoGetChannelData` populates exactly 524,288 decoded samples per channel in the characterized deep-memory modes.
+
+The same family datasheet advertises LabVIEW/VB/VC/CVI second-development support. NI Community posts independently show that Hantek distributed SDK manuals, LabVIEW VIs and DLLs for these devices.
+
+This does not prove that the physical DSO-1102 is electrically identical to a DSO-2250. It does, however, materially support the conclusion that the DSO1102 vendor DLL derives from the same 2250/2150 second-development codebase and that the observed 512 KiSample record depth is intentional family behavior rather than an accidental overrun.
+
+### NI evidence on dsoGetChannelData buffers
+
+In an NI Community inspection of the manufacturer's DSO-2090 LabVIEW VI, `dsoGetChannelData()` was found to receive two caller-owned output arrays preallocated to 30,000 elements each.
+
+NI contributors explicitly warned that the external C DLL cannot resize LabVIEW arrays and that insufficient output allocation is a common cause of corruption/error 1097.
+
+This further validates the bridge's design:
+- caller-owned pinned buffers;
+- guard allocation larger than the expected decoded record;
+- post-call ADC-range validation;
+- runtime measurement of actual written extent.
+
+### Historical SecondDesign package
+
+An NI Community thread for the Voltcraft/Hantek DSO-2100 includes an attachment named:
+
+```text
+SecondDesignDSO-2100USB_Ver5.0.0.1_English.zip
+```
+
+An NI contributor who opened the archive reported that the function declarations are contained in `SecondDesignManual.txt`.
+
+This is potentially the closest historical SDK documentation found so far. The attachment itself is not currently retrievable through the indexed forum page, so no declaration from it is treated as evidence until the original archive/manual can be recovered.
