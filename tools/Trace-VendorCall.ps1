@@ -1,6 +1,8 @@
 param(
     [string]$Export = 'dsoGetChannelData',
     [int]$ArgumentCount = 8,
+    [int]$MaxCalls = 1,
+    [int]$IdleTimeoutMs = 30000,
     [string]$ExePath = 'C:\Program Files (x86)\DSO-1102 USB\DSO-1102 USB.exe',
     [string]$DllPath = 'C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll'
 )
@@ -14,6 +16,8 @@ dotnet run --project $project -c Release -r win-x86 -- `
   --exe $ExePath `
   --dll $DllPath `
   --export $Export `
-  --args $ArgumentCount
+  --args $ArgumentCount `
+  --max-calls $MaxCalls `
+  --idle-timeout-ms $IdleTimeoutMs
 
 exit $LASTEXITCODE
