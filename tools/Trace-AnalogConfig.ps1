@@ -105,13 +105,20 @@ The tracer is read-only; dsoSetOffset is only observed, never invoked.
 
 
 <#
-Expected DSO-2250-family scalar sequence for -Mode channel:
-  CH1 only       -> arg2 = 0
-  both channels  -> arg2 = 2
-  CH2 only       -> arg2 = 3
-  neither        -> arg2 = 1
+Important channel-helper behavior:
+  dsoSetTriggerAndSampleRateNew forces _dsoSetChIn arg2=2 whenever the
+  Time/DIV code is >= 10 (10 us/div and slower).
 
-DSO-1102 has already directly shown 0 -> 2. Value 3 remains to be verified.
+  Only Time/DIV codes 0..9 (4 ns/div .. 4 us/div) pass the application's
+  hardware-channel mode through to _dsoSetChIn.
+
+Therefore do NOT use a 400 us / 1 ms / 2 ms / 4 ms trace to infer UI channel
+enable state. A future fast-timebase trace can test the DSO-2250-family
+hypothesis:
+  0 = CH1 hardware path
+  1 = none
+  2 = both
+  3 = CH2 hardware path
 #>
 
 
