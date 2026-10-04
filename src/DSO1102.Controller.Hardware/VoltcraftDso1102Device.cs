@@ -148,23 +148,10 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
                 "The current verified 1 ms/div backend requires both CH1 and CH2 enabled.");
         }
 
-        if (Math.Abs(settings.Channel1VoltsPerDivision - 1.0) > 1e-12 ||
-            Math.Abs(settings.Channel2VoltsPerDivision - 1.0) > 1e-12)
-        {
-            throw new NotSupportedException(
-                "The current real-hardware profile is limited to the verified 1 V/div range on both channels.");
-        }
-
         if (settings.TriggerSource != TriggerSource.Channel1)
         {
             throw new NotSupportedException(
-                "The current real-hardware profile is limited to CH1 trigger source.");
-        }
-
-        if (settings.TriggerSlope != TriggerSlope.Rising)
-        {
-            throw new NotSupportedException(
-                "The current real-hardware profile is limited to rising-edge trigger.");
+                "The current verified frame command uses CH1 as the trigger source.");
         }
 
         if (settings.RecordLength < 32)
