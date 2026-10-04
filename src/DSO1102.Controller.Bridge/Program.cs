@@ -1043,8 +1043,8 @@ internal static class Program
             secondaryTimingWord = $"0x{p.secondary:X4}",
             secondaryMechanicalComplementValue = secondaryMechanicalDivider,
             secondaryMeaning = "DSO-1102/vendor-DLL-specific. No matching second timing word exists in OpenHantek's public 8-byte DSO-2250 0x0E structure.",
-            familyCorrelatedHardwareRateCandidateHz,
-            familyCorrelatedHardwareRateCandidateMeaning = familyCorrelatedHardwareRateCandidateHz.HasValue
+            familyCorrelatedHardwareRateCandidateHz = familyCorrelatedRateCandidateHz,
+            familyCorrelatedHardwareRateCandidateMeaning = familyCorrelatedRateCandidateHz.HasValue
                 ? "Candidate only: assumes the DSO-2250 normal-mode 100 MHz base clock applies to this DSO-1102 profile. Not yet a runtime-measured DSO-1102 rate."
                 : null,
             note = "Keep this hardware-programming domain separate from the CAL-referenced effective rate measured in the transferred/deinterleaved sample stream."
