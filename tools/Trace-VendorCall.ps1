@@ -6,6 +6,7 @@ param(
     [int]$TotalTimeoutMs = 120000,
     [int]$DistinctPointerArg = 0,
     [int]$DistinctScalarArg = 0,
+    [int]$DistinctLow16Signature = 0,
     [string]$ExePath = 'C:\Program Files (x86)\DSO-1102 USB\DSO-1102 USB.exe',
     [string]$DllPath = 'C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll'
 )
@@ -24,6 +25,7 @@ dotnet run --project $project -c Release -r win-x86 -- `
   --idle-timeout-ms $IdleTimeoutMs `
   --total-timeout-ms $TotalTimeoutMs `
   --distinct-pointer-arg $DistinctPointerArg `
-  --distinct-scalar-arg $DistinctScalarArg
+  --distinct-scalar-arg $DistinctScalarArg `
+  --distinct-low16-signature $DistinctLow16Signature
 
 exit $LASTEXITCODE
