@@ -758,3 +758,51 @@ Thus the earlier fixed 10,240-sample analysis window was only a small prefix of 
 At the locally measured ~5 MS/s sample spacing, 524,288 samples correspond to approximately 104.8576 ms of raw decoded acquisition per channel. This duration is a derived value, not yet a claim about the visible screen width; the vendor application may display only a viewport of the deeper acquisition memory.
 
 The bridge now also analyzes the complete 524,288-sample buffers and reports full-buffer ADC validity, tail samples, plateau statistics, and square-wave timing. This will verify whether the decoded 1 kHz CAL waveform remains coherent across the entire deep-memory record.
+
+
+## 1 ms/div full-buffer verification
+
+A full-buffer `capture-1ms` run verifies the deep-memory interpretation.
+
+Per channel:
+
+```text
+buffer length        = 524,288 samples
+valid ADC8 samples   = 524,287
+excluded sentinel    = 1
+valid fraction       = 0.9999980926513672
+```
+
+CH1 remains a clean two-plateau square wave across the whole buffer:
+
+```text
+rising edges         = 105
+falling edges        = 104
+rising periods       = 104
+falling periods      = 103
+mean period          = 4999.299516908212 samples
+period stddev        = 1.9798867284376596 samples
+period CV            = 0.00039603282854757
+edge agreement       = true
+```
+
+Using the nominal 1 kHz internal CAL source:
+
+```text
+estimated sample rate     = 4,999,299.5169 samples/s
+estimated sample interval = 200.028023 ns
+estimated record duration = 104.872092 ms
+```
+
+CH2 remains a quiet channel over the same full record and is rejected by the plateau/timing detector as a secondary outlier cluster rather than a periodic waveform.
+
+Conclusion:
+
+```text
+timeBaseCode 16 = 1 ms/div
+decoded sample stream ~= 5 MS/s
+decoded record depth  = 524,288 samples/channel
+decoded record span   ~= 104.87 ms/channel
+```
+
+The visible 1 ms/div screen is therefore a viewport into a much deeper decoded acquisition record; it is not equivalent to the full capture duration.
