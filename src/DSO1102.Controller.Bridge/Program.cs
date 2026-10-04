@@ -23,6 +23,9 @@ internal static class Program
     private delegate ushort DsoGetChannelLevelDelegate(int deviceIndex, IntPtr values, ushort count);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate ushort DsoGetCalDataDelegate(int deviceIndex, out ushort calibrationA, out ushort calibrationB);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate ushort DsoGetCaptureStateDelegate(int deviceIndex, out uint captureValue);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -36,14 +39,14 @@ internal static class Program
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate ushort DsoGetChannelDataDelegate(
-        int deviceIndex,
+        ushort deviceIndex,
         IntPtr bufferA,
         IntPtr bufferB,
-        IntPtr captureConfig,
-        IntPtr channelConfig,
+        IntPtr triggerSampleConfig,
+        IntPtr offsetCalibrationState,
         uint triggerValue,
-        int correctionA,
-        int correctionB);
+        ushort calibrationA,
+        ushort calibrationB);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryExW(string lpFileName, IntPtr hFile, uint dwFlags);
@@ -68,9 +71,10 @@ internal static class Program
                 "info" => ReadDeviceInfo(dllPath),
                 "arm" => ArmAndObserve(dllPath, forceTrigger: false),
                 "force" => ArmAndObserve(dllPath, forceTrigger: true),
-                "capture-gnd" => Fail("capture-gnd is temporarily disabled until the eight-argument vendor ABI is verified from a before/after runtime trace."),
+                "capture-gnd" => Fail("capture-gnd v1 is disabled because it used an incorrect vendor ABI. Use capture-gnd-v2 after initializing the known profile in the original application."),
+                "capture-gnd-v2" => CaptureGroundBaselineV2(dllPath),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-gnd, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-gnd-v2, exports.")
             };
         }
         catch (Exception ex)
@@ -144,6 +148,7 @@ internal static class Program
         var getDeviceId = library.GetDelegate<DsoGetDeviceIdDelegate>("dsoGetDeviceID");
         var getDeviceAddress = library.GetDelegate<DsoGetDeviceAddressDelegate>("dsoGetDeviceAddress");
         var getChannelLevel = library.GetDelegate<DsoGetChannelLevelDelegate>("dsoGetChannelLevel");
+        var getCalData = library.GetDelegate<DsoGetCalDataDelegate>("dsoGetCalData");
         var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
 
         var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
@@ -179,6 +184,10 @@ internal static class Program
             .Select(i => (ushort)((channelLevels[i * 2] << 8) | channelLevels[i * 2 + 1]))
             .ToArray();
 
+        var calibrationA = (ushort)0;
+        var calibrationB = (ushort)0;
+        var calDataStatus = getCalData(deviceIndex, out calibrationA, out calibrationB);
+
         var captureValue = 0u;
         var captureStateCode = getCaptureState(deviceIndex, out captureValue);
 
@@ -209,6 +218,12 @@ internal static class Program
                     rawBytesExpandedToWords = channelLevels,
                     packedWordCount = packedCalibrationWords.Length,
                     packedWords = packedCalibrationWords
+                },
+                calData = new
+                {
+                    callSucceeded = calDataStatus != 0,
+                    calibrationA,
+                    calibrationB
                 },
                 captureState = new
                 {
@@ -438,6 +453,192 @@ internal static class Program
         });
 
         return 0;
+    }
+
+    private static int CaptureGroundBaselineV2(string dllPath)
+    {
+        using var library = VendorLibrary.Load(dllPath);
+
+        var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
+        var getChannelLevel = library.GetDelegate<DsoGetChannelLevelDelegate>("dsoGetChannelLevel");
+        var getCalData = library.GetDelegate<DsoGetCalDataDelegate>("dsoGetCalData");
+        var captureStart = library.GetDelegate<DsoCaptureStartDelegate>("dsoCaptureStart");
+        var triggerEnabled = library.GetDelegate<DsoTriggerEnabledDelegate>("dsoTriggerEnabled");
+        var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
+        var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
+        var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
+
+        var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
+        if (deviceIndex < 0)
+            return Fail("No DSO-1102 device was found at indices 0..3.");
+
+        const ushort channelLevelCount = 0x58;
+        var channelLevels = new ushort[channelLevelCount];
+        var channelLevelsHandle = GCHandle.Alloc(channelLevels, GCHandleType.Pinned);
+
+        ushort channelLevelStatus;
+        try
+        {
+            channelLevelStatus = getChannelLevel(
+                deviceIndex,
+                channelLevelsHandle.AddrOfPinnedObject(),
+                channelLevelCount);
+        }
+        finally
+        {
+            channelLevelsHandle.Free();
+        }
+
+        if (channelLevelStatus == 0)
+            return Fail("dsoGetChannelLevel failed; refusing waveform decode without the live calibration table.");
+
+        var calibrationA = (ushort)0;
+        var calibrationB = (ushort)0;
+        var calDataStatus = getCalData(deviceIndex, out calibrationA, out calibrationB);
+        if (calDataStatus == 0)
+            return Fail("dsoGetCalData failed; refusing waveform decode without the live calibration bytes.");
+
+        captureStart(deviceIndex);
+        Thread.Sleep(3);
+        triggerEnabled(deviceIndex);
+        Thread.Sleep(3);
+        force(deviceIndex);
+        Thread.Sleep(3);
+
+        var stateCode = (ushort)0;
+        var triggerValue = 0u;
+
+        for (var i = 0; i < 100; i++)
+        {
+            stateCode = getCaptureState(deviceIndex, out triggerValue);
+
+            if (stateCode == 3)
+                break;
+
+            if (stateCode == 127)
+                return Fail("Capture timed out before DSO-1102 ready state 3.");
+
+            Thread.Sleep(3);
+        }
+
+        if (stateCode != 3)
+            return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
+
+        // Exact object-state prefix observed at the original application's real
+        // dsoGetChannelData call for the agreed CH1-GND test profile.
+        //
+        // arg4 points to word 0.
+        // arg5 points 12 bytes later, i.e. word 6.
+        // The live 0x58 channel-level bytes start at word 23.
+        var vendorState = new ushort[256];
+        ushort[] tracedPrefix =
+        [
+            0, 2, 12, 50, 0, 0,
+            64, 192, 64, 192, 128, 0, 0, 256,
+            0, 0, 0, 0, 0, 0, 0, 0, 16368
+        ];
+
+        Array.Copy(tracedPrefix, vendorState, tracedPrefix.Length);
+        Array.Copy(channelLevels, 0, vendorState, 23, channelLevels.Length);
+
+        const int verifiedSampleCount = 0x2800;
+        const int guardBufferSamples = 524_288;
+
+        var bufferA = new ushort[guardBufferSamples];
+        var bufferB = new ushort[guardBufferSamples];
+
+        var stateHandle = GCHandle.Alloc(vendorState, GCHandleType.Pinned);
+        var bufferAHandle = GCHandle.Alloc(bufferA, GCHandleType.Pinned);
+        var bufferBHandle = GCHandle.Alloc(bufferB, GCHandleType.Pinned);
+
+        ushort readResult;
+
+        try
+        {
+            var stateBase = stateHandle.AddrOfPinnedObject();
+
+            readResult = getChannelData(
+                checked((ushort)deviceIndex),
+                bufferAHandle.AddrOfPinnedObject(),
+                bufferBHandle.AddrOfPinnedObject(),
+                stateBase,
+                IntPtr.Add(stateBase, 12),
+                triggerValue,
+                calibrationA,
+                calibrationB);
+        }
+        finally
+        {
+            bufferBHandle.Free();
+            bufferAHandle.Free();
+            stateHandle.Free();
+        }
+
+        var a = bufferA.Take(verifiedSampleCount).ToArray();
+        var b = bufferB.Take(verifiedSampleCount).ToArray();
+        var allZeroA = a.All(x => x == 0);
+        var allZeroB = b.All(x => x == 0);
+        var waveformReadValid = readResult != 0 && !(allZeroA && allZeroB);
+
+        WriteJson(new
+        {
+            ok = waveformReadValid,
+            command = "capture-gnd-v2",
+            deviceIndex,
+            abi = new
+            {
+                verifiedFromVendorRuntimeTrace = true,
+                arg1 = "deviceIndex (low 16 bits)",
+                arg2 = "waveform buffer A",
+                arg3 = "waveform buffer B",
+                arg4 = "trigger/sample configuration pointer",
+                arg5 = "offset/calibration-state pointer = arg4 + 12 bytes",
+                arg6 = "trigger/capture value returned by dsoGetCaptureState",
+                arg7 = "calibrationA returned by dsoGetCalData",
+                arg8 = "calibrationB returned by dsoGetCalData"
+            },
+            profile = new
+            {
+                name = "vendor-traced CH1 GND profile",
+                requiresOriginalApplicationInitialization = true,
+                triggerSampleWords = tracedPrefix.Take(5).ToArray(),
+                calibrationA,
+                calibrationB,
+                channelLevelCount = channelLevels.Length
+            },
+            capture = new
+            {
+                stateCode,
+                stateName = CaptureStateName(stateCode),
+                triggerValue,
+                vendorReadResult = readResult,
+                sampleCountPerBuffer = verifiedSampleCount,
+                sampleCountSource = "Original application call-site branch for the traced profile."
+            },
+            bufferA = SummarizeSamples(a),
+            bufferB = SummarizeSamples(b),
+            interpretation = new
+            {
+                waveformReadValid,
+                allZeroA,
+                allZeroB,
+                channelMapping = waveformReadValid
+                    ? "Pending empirical CH1/CH2 mapping. CH1 is physically tied to GND for this test."
+                    : "Not evaluated because the vendor call did not populate either buffer.",
+                voltageCalibrationAppliedByVendorDll = true
+            },
+            safety = new
+            {
+                persistentConfigurationChanged = false,
+                calibrationWritten = false,
+                flashWritten = false,
+                deviceIdWritten = false,
+                configurationSettersCalled = false,
+                waveformRead = waveformReadValid
+            }
+        });
+
+        return waveformReadValid ? 0 : 2;
     }
 
     private static object SummarizeSamples(ushort[] samples)
