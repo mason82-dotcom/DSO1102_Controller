@@ -703,3 +703,33 @@ record duration = 2.048 ms
 ```
 
 The short record contains only about two periods of the 1 kHz reference signal, so the timing detector now accepts one matching period from each edge polarity when plateau occupancy is valid and the two period estimates agree.
+
+
+## 1 ms/div capture exposes larger-record hypothesis
+
+A profile-specific `capture-1ms` run with time-base code 16 was valid but the first 10,240 decoded samples still contained approximately 5,000 samples per 1 kHz CAL period:
+
+```text
+rising period  = 4999 samples
+falling period = 5001 samples
+combined mean  = 5000 samples
+=> local decoded sample spacing ~= 200 ns
+=> local decoded rate ~= 5 MS/s
+```
+
+This means the previous assumption that 10,240 samples are the complete acquisition record is not valid for all time-base modes.
+
+The vendor DLL was already known to contain larger-memory paths. A plausible interpretation is that the 1 ms/div mode keeps a 5 MS/s decoded sample stream but returns a longer record, while earlier bridge diagnostics inspected only the first 0x2800 samples.
+
+The bridge now scans the entire 524,288-sample guard allocation after each `dsoGetChannelData` call and reports:
+
+```text
+bufferWriteExtentA
+bufferWriteExtentB
+  lastNonZeroIndex
+  populatedPrefixEstimate
+  totalNonZeroValues
+  nonZeroChunks
+```
+
+This is a diagnostic estimate based on the zero-initialized guard buffers. It is intended to recover the actual mode-dependent record length before changing the fixed 0x2800 analysis window.
