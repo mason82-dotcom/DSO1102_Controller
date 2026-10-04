@@ -389,7 +389,7 @@ internal static class Program
         try
         {
             readResult = getChannelData(
-                deviceIndex,
+                checked((ushort)deviceIndex),
                 handles[0].AddrOfPinnedObject(),
                 handles[1].AddrOfPinnedObject(),
                 handles[2].AddrOfPinnedObject(),
