@@ -665,3 +665,41 @@ capture-4ms
 ```
 
 These commands do not call any configuration setter. The vendor application must first initialize the matching time base, then be closed. The bridge only performs capture/read using the runtime-traced decoding structure.
+
+
+## 400 us/div measured sample rate
+
+The first profile-specific `capture-400us` run exposed a stale/misaligned decoder state even though the vendor function returned success: CH1 contained only 1,825 byte-range ADC values and 8,415 values outside 0..255, while CH2 contained only 33 byte-range values. This is not a valid decoded waveform and is now rejected by the bridge.
+
+A repeated `capture-400us` run produced a clean record:
+
+```text
+CH1 valid ADC samples = 10,239 / 10,240
+CH2 valid ADC samples = 10,239 / 10,240
+CH1 low plateau       = 127.0683 counts
+CH1 high plateau      = 132.9030 counts
+plateau separation    = 5.8347 counts
+high duty fraction    = 0.4883
+rising edges          = 2185, 7185
+falling edges         = 4685, 9685
+period                = exactly 5000 samples
+```
+
+Using the nominal 1 kHz internal CAL waveform:
+
+```text
+sample rate     = 5,000,000 samples/s
+sample interval = 200 ns
+record duration = 10,240 / 5,000,000 = 2.048 ms
+```
+
+Therefore the previously predicted 2.5 MS/s value for time-base code 15 was wrong. The measured profile is:
+
+```text
+timeBaseCode 15 = 400 us/div
+sample rate     = 5 MS/s
+sample count    = 10,240
+record duration = 2.048 ms
+```
+
+The short record contains only about two periods of the 1 kHz reference signal, so the timing detector now accepts one matching period from each edge polarity when plateau occupancy is valid and the two period estimates agree.
