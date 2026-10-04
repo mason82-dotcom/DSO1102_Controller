@@ -422,3 +422,40 @@ recordDurationMs      = sampleCount / estimatedSampleRateHz * 1000
 ```
 
 The 1 kHz value is explicitly treated as a nominal external reference, not as a property inferred from the USB protocol.
+
+
+## Time-base profile inferred from internal CAL signal
+
+For the vendor-traced CH1 profile, the decoded buffer contains 10,240 samples and the internal CAL signal yields:
+
+```text
+rising-edge periods: 999..1000 samples, mean 999.7778
+falling-edge periods: 999..1001 samples, mean 999.8000
+combined mean period: 999.7895 samples
+```
+
+Using the nominal 1 kHz internal CAL signal as the external reference gives:
+
+```text
+estimated sample rate   = 999,789.47 samples/s
+estimated sample period = 1.00021 us
+estimated record length = 10.24116 ms
+```
+
+This is consistent with the discrete 1 MS/s mode expected for the currently initialized 1 ms/div profile. If the hardware sample clock is taken as exactly 1,000,000 samples/s, the observed CAL waveform frequency is:
+
+```text
+1,000,000 / 999.7895 = 1000.21 Hz
+```
+
+Therefore the current profile is treated as:
+
+```text
+time-base code         = 12
+configured time base   = 1 ms/div
+sample count           = 10,240
+sample rate candidate  = 1 MS/s
+record duration        = 10.24 ms
+```
+
+The sample-rate value remains marked as a profile-level inference until the original vendor time-base/sample-rate lookup table is statically recovered.
