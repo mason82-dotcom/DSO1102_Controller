@@ -851,7 +851,7 @@ decoded record depth  = 524,288 samples/channel
 decoded record span   ~= 104.89 ms/channel
 ```
 
-Therefore, changing from 1 ms/div (code 16) to 2 ms/div (code 17) does not change the decoded sample clock or deep-memory record length. The time-base change is implemented at a later display/viewport stage in the vendor application for these two settings.
+Therefore, changing from 1 ms/div (code 16) to 2 ms/div (code 17) does not change the approximately 5 MS/s density of the vendor-decoded output array or its 524,288-sample length. Later static analysis of `_dsoSetSampleRate@8` proved that the hardware timing/downsampler fields do change between these Time/DIV settings, so this observation must not be interpreted as an unchanged physical ADC clock.
 
 
 ## 4 ms/div full-buffer verification
@@ -895,7 +895,7 @@ decoded record depth  = 524,288 samples/channel
 decoded record span   ~= 104.87 ms/channel
 ```
 
-Together with the verified 1 ms/div and 2 ms/div profiles, codes 16, 17 and 18 all use the same ~5 MS/s 512 KiSample deep-memory acquisition. The UI time-base difference for these settings is therefore a display/viewport operation rather than an ADC sample-clock or record-depth change.
+Together with the verified 1 ms/div and 2 ms/div profiles, codes 16, 17 and 18 all produce an approximately 5 MS/s, 512 KiSample/channel vendor-decoded output grid. Static analysis of `_dsoSetSampleRate@8` later proved that their hardware downsampler programming is different. The common decoded grid is therefore a DLL output/expansion property, not evidence that the physical ADC sample clock is unchanged.
 
 
 ## Verified time-base summary
@@ -909,7 +909,7 @@ Current runtime-verified mapping:
 | 2 ms/div | 17 | ~5 MS/s | 524,288 samples | full-buffer verified |
 | 4 ms/div | 18 | ~5 MS/s | 524,288 samples | full-buffer verified |
 
-For codes 16..18, changing Time/div does not change the decoded ADC sample clock or decoded record depth. The visible horizontal scale is therefore implemented downstream as viewport/rendering behavior for those profiles.
+For codes 16..18, changing Time/div does not change the approximately 5 MS/s density or 524,288-sample length of the decoded DLL output. It does change the hardware samplerate/downsampler programming. The decoded output grid and the physical ADC sample clock must therefore be treated as separate domains.
 
 All four profiles in this block are now full-buffer verified.
 
@@ -955,7 +955,7 @@ decoded record depth  = 524,288 samples/channel
 decoded record span   ~= 104.88 ms/channel
 ```
 
-Codes 15, 16, 17 and 18 are therefore all verified to use the same approximately 5 MS/s, 512 KiSample/channel decoded acquisition stream. In this range, Time/div changes are downstream viewport/rendering behavior rather than changes in decoded sample clock or decoded record depth.
+Codes 15, 16, 17 and 18 are therefore all verified to expose the same approximately 5 MS/s, 512 KiSample/channel decoded output grid. This does not mean that the hardware ADC clock is constant: `_dsoSetSampleRate@8` programs different timing/downsampler words for these codes.
 
 
 ## Guarded time-base self-initialization probe
@@ -2103,3 +2103,58 @@ When true, it does not copy the acquired waveform samples into the display buffe
 Therefore GND on this DSO-1102 software stack is a display/data-processing mode, not a distinct input-relay command. A replacement controller should reproduce GND by suppressing the displayed/acquired signal and drawing the ground-reference level while leaving the hardware coupling in the non-AC state.
 
 This distinction matters for diagnostics: selecting GND in the replacement UI must not be presented as proof that the BNC input has been physically shorted to ground.
+
+
+## Hardware samplerate programming versus decoded output rate
+
+A direct disassembly of the real `DSO1102USB.dll` export `_dsoSetSampleRate@8` resolves an important ambiguity in the earlier capture analysis.
+
+The full-buffer CAL-wave timing showed approximately 5,000 decoded array elements per 1 kHz period for Time/DIV codes 15..18. That measurement describes the **vendor-decoded output sample grid** returned by `dsoGetChannelData`.
+
+It is not the same thing as the physical ADC/sample-clock programming.
+
+For the normal traced setter-state branch (`config.word[4] != 0`), `_dsoSetSampleRate@8` emits command `0x0E` and programs two 16-bit timing/downsampler fields:
+
+```text
+Time/DIV       code   primary word   divider   secondary word   divider
+400 us/div      15      0xFFED          20        0xFFF7           10
+1 ms/div        16      0xFFD9          40        0xFFED           20
+2 ms/div        17      0xFF9D         100        0xFFCF           50
+4 ms/div        18      0xFF39         200        0xFF9D          100
+```
+
+The divider values use the historical Hantek one's-complement relation:
+
+```text
+divider = (~word & 0xFFFF) + 2
+```
+
+For the traced configuration, the command flag byte is `0x0A` for all four profiles.
+
+Therefore the hardware timing state unquestionably changes across 400 us/div -> 1 ms/div -> 2 ms/div -> 4 ms/div even though the decoded output arrays retain an approximately 5 MS/s grid.
+
+The two timing words in the DSO-1102's 10-byte command are both directly verified from the DLL. Their exact physical roles still need runtime correlation; historical DSO-2250 documentation has only one public 16-bit downsampler field in the older 8-byte form, so the second DSO-1102 field must not yet be labeled as a specific ADC clock without evidence.
+
+Practical consequence:
+
+```text
+~5 MS/s from squareWaveTiming
+    = decoded vendor-output sample density
+
+_dsoSetSampleRate timing words
+    = hardware acquisition timing/downsampler programming
+```
+
+Any final controller UI should expose the hardware samplerate only after the two DLL timing fields have been correlated to real acquisition timing. Until then, the bridge reports them separately.
+
+### Vendor specification cross-check
+
+The DSO-1102 user manual specifies:
+- 100 MHz analog bandwidth;
+- 8-bit vertical resolution;
+- up to 250 MSa/s real-time sampling using one channel;
+- Time/DIV from 4 ns/div to 1 h/div;
+- 10 mV/div to 5 V/div at 1x probe;
+- AC/DC/GND coupling.
+
+These published limits are consistent with the reconstructed 38-entry Time/DIV table and nine-step vertical-range table, but do not by themselves define the DLL's internal downsampler words.
