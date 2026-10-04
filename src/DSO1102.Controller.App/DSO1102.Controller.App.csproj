@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>DSO1102_Controller</AssemblyName>
+    <RootNamespace>DSO1102.Controller.App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DSO1102.Controller.Core\DSO1102.Controller.Core.csproj" />
+    <ProjectReference Include="..\DSO1102.Controller.Hardware\DSO1102.Controller.Hardware.csproj" />
+  </ItemGroup>
+</Project>
