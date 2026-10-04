@@ -807,7 +807,8 @@ internal static class Program
                 triggerSampleWords = tracedPrefix.Take(6).ToArray(),
                 triggerSampleState = new
                 {
-                    triggerInputSelectorRaw = tracedPrefix[0],
+                    triggerSourceCode = tracedPrefix[0],
+                    triggerSource = TriggerSourceName(tracedPrefix[0]),
                     fastTimebaseHardwareChannelModeRaw = tracedPrefix[1],
                     timeBaseCode = tracedPrefix[2],
                     triggerPositionPercent = tracedPrefix[3],
@@ -864,6 +865,16 @@ internal static class Program
 
         return waveformReadValid ? 0 : 2;
     }
+
+    private static string TriggerSourceName(ushort code) => code switch
+    {
+        0 => "CH1",
+        1 => "CH2",
+        2 => "ALT",
+        3 => "EXT",
+        4 => "EXT/10",
+        _ => $"Unknown ({code})"
+    };
 
     private static object? DescribeHardwareSamplerateProgramming(ushort? timeBaseCode)
     {
