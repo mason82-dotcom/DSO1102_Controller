@@ -182,3 +182,29 @@ Known family state codes are tracked neutrally as:
 - 127: TIMEOUT
 
 The exact semantic meaning of VALUE0, VALUE1 and VALUE7 for the DSO-1102 remains to be verified empirically.
+
+
+## Verified DSO-1102 capture-ready state
+
+After initializing a simple CH1/DC/1x/1 V-div/1 ms-div configuration with the original application and closing it, the bridge sequence
+
+```text
+dsoCaptureStart
+sleep 3 ms
+dsoTriggerEnabled
+sleep 3 ms
+dsoForceTrigger
+sleep 3 ms
+dsoGetCaptureState
+```
+
+reliably produced:
+
+- state code: `3`
+- stable raw trigger value: `4968`
+
+Therefore state code `3` is treated as the DSO-1102 capture-ready/readable state.
+
+For the small-memory path, disassembly of `dsoGetChannelData` shows an output size of `0x2800` samples per decoded buffer (10,240 samples). The large-memory path expands to 524,288 samples.
+
+The experimental `capture-gnd` bridge command reads the already configured capture without invoking any vendor `Set*`, calibration, flash, or device-ID write function. It emits neutral buffer A/B statistics so CH1 can be identified empirically by tying CH1 to GND.
