@@ -93,8 +93,10 @@ internal static class Program
                 "self-init-1ms" => CaptureGroundBaselineV2(dllPath, "self-init-1ms", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
                 "self-init-2ms" => CaptureGroundBaselineV2(dllPath, "self-init-2ms", groundReference: false, timeBaseCode: 17, timeBaseLabel: "2 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
                 "self-init-4ms" => CaptureGroundBaselineV2(dllPath, "self-init-4ms", groundReference: false, timeBaseCode: 18, timeBaseLabel: "4 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true),
+                "frame-400us-adc" => CaptureGroundBaselineV2(dllPath, "frame-400us-adc", groundReference: false, timeBaseCode: 15, timeBaseLabel: "400 us/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true),
+                "frame-1ms-adc" => CaptureGroundBaselineV2(dllPath, "frame-1ms-adc", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true),
                 "exports" => CheckExports(dllPath),
-                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, exports.")
+                _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, exports.")
             };
         }
         catch (Exception ex)
@@ -552,7 +554,8 @@ internal static class Program
         ushort? timeBaseCode = null,
         string? timeBaseLabel = null,
         double? decodedOutputReferenceRateHz = null,
-        bool selfInitializeTimeBase = false)
+        bool selfInitializeTimeBase = false,
+        bool emitAdcPayload = false)
     {
         using var library = VendorLibrary.Load(dllPath);
 
@@ -762,6 +765,30 @@ internal static class Program
             !(allZeroA && allZeroB) &&
             decoderLooksSane;
 
+        object? adcPayload = null;
+        if (emitAdcPayload && waveformReadValid)
+        {
+            var payloadSampleCount = tracedPrefix[10] == 0 ? 0x2800 : 0x80000;
+            var payloadA = new ushort[payloadSampleCount];
+            var payloadB = new ushort[payloadSampleCount];
+            Array.Copy(bufferA, payloadA, payloadSampleCount);
+            Array.Copy(bufferB, payloadB, payloadSampleCount);
+
+            var bytesA = new byte[payloadA.Length * sizeof(ushort)];
+            var bytesB = new byte[payloadB.Length * sizeof(ushort)];
+            Buffer.BlockCopy(payloadA, 0, bytesA, 0, bytesA.Length);
+            Buffer.BlockCopy(payloadB, 0, bytesB, 0, bytesB.Length);
+
+            adcPayload = new
+            {
+                encoding = "u16le-base64",
+                sampleDomain = "DSO1102USB.dll decoded ADC counts before vendor-EXE post-correction",
+                sampleCountPerChannel = payloadSampleCount,
+                channel1 = Convert.ToBase64String(bytesA),
+                channel2 = Convert.ToBase64String(bytesB)
+            };
+        }
+
         WriteJson(new
         {
             ok = waveformReadValid,
@@ -833,7 +860,8 @@ internal static class Program
                 bufferWriteExtentA = writeExtentA,
                 bufferWriteExtentB = writeExtentB,
                 fullBufferA,
-                fullBufferB
+                fullBufferB,
+                adcPayload
             },
             bufferA = SummarizeSamples(a),
             bufferB = SummarizeSamples(b),
