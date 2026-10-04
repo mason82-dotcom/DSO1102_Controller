@@ -1778,3 +1778,85 @@ The export computes three calibrated 16-bit values and passes the resulting six 
 followed by the six calculated bytes.
 
 The exact semantic label for arg5 remains to be confirmed at runtime. Based on the original application's surrounding trigger logic and Hantek-family behavior, it is likely related to trigger-source selection, but that label is not yet promoted to a protocol fact.
+
+
+## dsoSetVoltageAndCoupling DLL-level decomposition
+
+Direct disassembly of `dsoSetVoltageAndCoupling` (RVA `0x63F0`) shows that the six-argument wrapper delegates to the exported helpers `dsoSetVoltageAndCouplingFirst` and `dsoSetVoltageAndCouplingSecond`.
+
+The complete argument roles are now:
+
+```text
+arg1 = device index
+arg2 = CH1 V/div range code
+arg3 = CH2 V/div range code
+arg4 = CH1 coupling code
+arg5 = CH2 coupling code
+arg6 = trigger/relay selector
+```
+
+The runtime trace had already verified:
+
+```text
+arg2: 5=500 mV/div, 6=1 V/div, 7=2 V/div
+arg3: same mapping for CH2
+arg4: 0=DC, 1=AC
+arg5: 0=DC, 1=AC
+```
+
+### Gain command
+
+`dsoSetVoltageAndCouplingFirst` maps each 0..8 range code into a repeating 1/2/5 gain triplet:
+
+```text
+range codes 0,3,6 -> gain subcode 0
+range codes 1,4,7 -> gain subcode 1
+range codes 2,5,8 -> gain subcode 2
+```
+
+It combines CH1 and CH2 gain subcodes into the vendor gain command (command byte 0x07).
+
+This is exactly consistent with the nine-step V/div sequence:
+
+```text
+10mV, 20mV, 50mV,
+100mV, 200mV, 500mV,
+1V, 2V, 5V
+```
+
+Only the values already runtime-tested on the DSO-1102 are treated as direct UI-code verification; the full labels are additionally corroborated by the Hantek-family SDK/source material.
+
+### Relay thresholds and coupling
+
+`dsoSetVoltageAndCouplingSecond` separately controls the analog relay state.
+
+For CH1:
+
+```text
+range < 3  -> both low-range relay groups active
+range 3..5 -> intermediate-range relay group active
+range 6..8 -> neither low-range relay group active
+```
+
+CH2 has the equivalent independent relay groups.
+
+The coupling logic is explicit:
+
+```text
+coupling == 1 -> AC relay state
+coupling != 1 -> non-AC relay state
+```
+
+The DSO-1102 runtime trace identifies the tested non-AC state value 0 as DC.
+
+### Sixth argument
+
+The relay helper sets the external-trigger relay only when:
+
+```text
+arg6 == 3
+```
+
+This matches historical Hantek/Voltcraft control-state documentation in which trigger selector value 3 denotes EXT.
+
+Thus `arg6` is strongly identified as the trigger-source/relay selector, with value 3 selecting the external-trigger relay. A dedicated DSO-1102 trigger-source trace is still desirable before all selector values are promoted as verified UI mappings.
