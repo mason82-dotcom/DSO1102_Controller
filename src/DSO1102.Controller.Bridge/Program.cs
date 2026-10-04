@@ -728,6 +728,180 @@ internal static class Program
         };
     }
 
+    private static object AnalyzeSquareWaveTiming(ushort[] adcSamples)
+    {
+        if (adcSamples.Length < 16)
+            return new { detected = false, reason = "too_few_samples" };
+
+        double low = adcSamples.Min();
+        double high = adcSamples.Max();
+
+        if (high - low < 2.0)
+            return new { detected = false, reason = "insufficient_level_separation" };
+
+        int[] lowCluster = [];
+        int[] highCluster = [];
+
+        for (var iteration = 0; iteration < 16; iteration++)
+        {
+            var lows = new List<int>();
+            var highs = new List<int>();
+
+            foreach (var sample in adcSamples)
+            {
+                if (Math.Abs(sample - low) <= Math.Abs(sample - high))
+                    lows.Add(sample);
+                else
+                    highs.Add(sample);
+            }
+
+            if (lows.Count == 0 || highs.Count == 0)
+                return new { detected = false, reason = "empty_cluster" };
+
+            var newLow = lows.Average();
+            var newHigh = highs.Average();
+            lowCluster = lows.ToArray();
+            highCluster = highs.ToArray();
+
+            if (Math.Abs(newLow - low) < 0.0001 && Math.Abs(newHigh - high) < 0.0001)
+            {
+                low = newLow;
+                high = newHigh;
+                break;
+            }
+
+            low = newLow;
+            high = newHigh;
+        }
+
+        var highFraction = (double)highCluster.Length / adcSamples.Length;
+        var minorFraction = Math.Min(highFraction, 1.0 - highFraction);
+
+        if (minorFraction < 0.05)
+            return new
+            {
+                detected = false,
+                reason = "secondary_cluster_too_small",
+                lowMean = low,
+                highMean = high,
+                highFraction,
+                minorFraction
+            };
+
+        var threshold = (low + high) / 2.0;
+        const int stableSamples = 4;
+
+        var rising = new List<int>();
+        var falling = new List<int>();
+
+        var stateHigh = adcSamples[0] >= threshold;
+
+        for (var i = 1; i <= adcSamples.Length - stableSamples; i++)
+        {
+            var candidateHigh = adcSamples[i] >= threshold;
+            if (candidateHigh == stateHigh)
+                continue;
+
+            var stable = true;
+            for (var j = 1; j < stableSamples; j++)
+            {
+                if ((adcSamples[i + j] >= threshold) != candidateHigh)
+                {
+                    stable = false;
+                    break;
+                }
+            }
+
+            if (!stable)
+                continue;
+
+            if (candidateHigh)
+                rising.Add(i);
+            else
+                falling.Add(i);
+
+            stateHigh = candidateHigh;
+            i += stableSamples - 1;
+        }
+
+        static double[] Periods(IReadOnlyList<int> edges)
+        {
+            if (edges.Count < 2)
+                return [];
+
+            var values = new double[edges.Count - 1];
+            for (var i = 1; i < edges.Count; i++)
+                values[i - 1] = edges[i] - edges[i - 1];
+
+            return values;
+        }
+
+        static object? PeriodStats(double[] values)
+        {
+            if (values.Length == 0)
+                return null;
+
+            var ordered = values.OrderBy(x => x).ToArray();
+            var mean = values.Average();
+            var variance = values.Select(x =>
+            {
+                var d = x - mean;
+                return d * d;
+            }).Average();
+
+            double median = ordered.Length % 2 == 1
+                ? ordered[ordered.Length / 2]
+                : (ordered[ordered.Length / 2 - 1] + ordered[ordered.Length / 2]) / 2.0;
+
+            return new
+            {
+                count = values.Length,
+                min = values.Min(),
+                max = values.Max(),
+                mean,
+                median,
+                standardDeviationSamples = Math.Sqrt(variance)
+            };
+        }
+
+        var risingPeriods = Periods(rising);
+        var fallingPeriods = Periods(falling);
+        var allPeriods = risingPeriods.Concat(fallingPeriods).ToArray();
+
+        double? meanPeriodSamples = allPeriods.Length > 0 ? allPeriods.Average() : null;
+        double? estimatedSampleRateAt1kHz =
+            meanPeriodSamples.HasValue ? meanPeriodSamples.Value * 1000.0 : null;
+        double? estimatedSampleIntervalNs =
+            estimatedSampleRateAt1kHz.HasValue && estimatedSampleRateAt1kHz.Value > 0
+                ? 1_000_000_000.0 / estimatedSampleRateAt1kHz.Value
+                : null;
+        double? estimatedRecordDurationMs =
+            estimatedSampleRateAt1kHz.HasValue && estimatedSampleRateAt1kHz.Value > 0
+                ? adcSamples.Length / estimatedSampleRateAt1kHz.Value * 1000.0
+                : null;
+
+        return new
+        {
+            detected = rising.Count >= 2 || falling.Count >= 2,
+            thresholdCounts = threshold,
+            stableSamplesRequired = stableSamples,
+            risingEdgeCount = rising.Count,
+            fallingEdgeCount = falling.Count,
+            risingEdgesFirst16 = rising.Take(16).ToArray(),
+            fallingEdgesFirst16 = falling.Take(16).ToArray(),
+            risingPeriodSamples = PeriodStats(risingPeriods),
+            fallingPeriodSamples = PeriodStats(fallingPeriods),
+            combinedMeanPeriodSamples = meanPeriodSamples,
+            ifSignalIs1kHz = new
+            {
+                referenceFrequencyHz = 1000,
+                estimatedSampleRateHz = estimatedSampleRateAt1kHz,
+                estimatedSampleIntervalNs,
+                estimatedRecordDurationMs
+            }
+        };
+    }
+
     private static object SummarizeSamples(ushort[] samples)
     {
         if (samples.Length == 0)
@@ -808,7 +982,8 @@ internal static class Program
                 median = Quantile(0.50),
                 q95 = Quantile(0.95),
                 histogramTop16 = histogram,
-                twoPlateauAnalysis = AnalyzeTwoPlateaus(adcSamples)
+                twoPlateauAnalysis = AnalyzeTwoPlateaus(adcSamples),
+                squareWaveTiming = AnalyzeSquareWaveTiming(adcSamples)
             },
             excluded16BitValues = nonAdcSamples
                 .Take(16)
