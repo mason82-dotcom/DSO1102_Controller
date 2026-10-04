@@ -52,3 +52,15 @@ powershell -ExecutionPolicy Bypass -File .\tools\Probe-UsbDevice.ps1
 ~~~
 
 See docs/HARDWARE_BRINGUP.md.
+
+
+## Reverse-engineering references
+
+The hardware backend is based on the original vendor DLL and driver rather than guessed USB commands.
+
+- `docs/DLL_COMPLETE_ANALYSIS.md` — complete static analysis of the original `DSO1102USB.dll`, including every export, transport path, command IDs, calibration layout, trigger/offset/filter behavior and safety classification.
+- `docs/SAMPLERATE_TABLE.md` — all 38 Time/DIV codes and the corresponding low-level samplerate/timing programming reconstructed from the DLL.
+- `docs/OPENHANTEK_REFERENCE.md` — DSO-2250/OpenHantek family correlations used as external semantic evidence only; no GPL implementation code is copied.
+- `docs/REVERSE_ENGINEERING.md` — chronological runtime/static findings and hardware verification notes.
+
+Persistent calibration, flash, device-ID and device-address write functions remain excluded from normal controller operation.
