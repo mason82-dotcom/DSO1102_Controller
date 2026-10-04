@@ -147,3 +147,38 @@ Further disassembly confirms these read paths:
 - `dsoGetCaptureState(deviceIndex, uint32* value)`: two stack arguments. The response status is returned separately and bytes 2..3 are combined into the output value.
 
 The bridge exposes these through the `info` command without invoking configuration-changing functions.
+
+
+## Calibration block interpretation
+
+The vendor application's own code calls the channel-level API with a length of `0x58` (88). The DLL reads exactly that many bytes from the device and expands each byte to a 16-bit output element.
+
+The vendor application pairs these 88 byte values as high-byte/low-byte pairs, producing 44 packed 16-bit calibration words. Therefore the bridge reports both representations.
+
+For the verified DSO-1102 unit, the first read produced 44 packed words beginning with:
+
+```text
+75, 168, 75, 166, 76, 166, 77, 166, ...
+```
+
+and ending with:
+
+```text
+92, 195, 92, 195, 10578, 10322, 15, 70
+```
+
+These are calibration/configuration values, not waveform samples.
+
+## Capture-state interpretation
+
+The capture-state function returns a state byte plus a separate trigger-related value. A state code of zero is a defined protocol state and must not be treated as a generic API failure.
+
+Known family state codes are tracked neutrally as:
+
+- 0: VALUE0
+- 1: VALUE1
+- 2: SUCCESS
+- 7: VALUE7
+- 127: TIMEOUT
+
+The exact semantic meaning of VALUE0, VALUE1 and VALUE7 for the DSO-1102 remains to be verified empirically.
