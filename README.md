@@ -120,3 +120,30 @@ For development builds, the bridge can also be selected explicitly:
 $env:DSO1102_BRIDGE_EXE = "D:\path\to\DSO1102_Bridge_x86.exe"
 $env:DSO1102_SDK_DLL = "C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll"
 ```
+
+
+## Real hardware backend
+
+The x64 controller now has an initial real DSO-1102 backend through the verified x86 vendor-DLL bridge.
+
+Current production safety boundary:
+
+```text
+Time/DIV             1 ms/div
+channels             CH1 + CH2
+trigger source       CH1
+waveform domain      decoded ADC counts
+amplitude calibrated no
+```
+
+The controller deliberately labels real hardware amplitudes as `ADC` rather than volts until the remaining vendor-application post-correction and count-to-voltage calibration are fully verified.
+
+The Windows CI artifact bundles the self-contained x86 bridge under:
+
+```text
+bridge\DSO1102_Bridge_x86.exe
+```
+
+next to the x64 controller. For custom layouts, set `DSO1102_BRIDGE_EXE` to the bridge executable path.
+
+The current real backend invokes the bridge as a separate process for each capture. This is intentionally conservative for the first functional integration; a persistent IPC bridge is the next performance optimization.
