@@ -10,7 +10,12 @@ namespace DSO1102.Controller.App;
 
 public partial class MainWindow : Window
 {
-    private DsoSettings _settings = new() { SampleRate = 100_000, RecordLength = 4096, TimePerDivisionSeconds = 0.001 };
+    private readonly DsoSettings _settings = new()
+    {
+        SampleRate = 100_000,
+        RecordLength = 4096,
+        TimePerDivisionSeconds = 0.001
+    };
     private IDsoDevice? _device;
     private CancellationTokenSource? _runCancellation;
     private AcquisitionFrame? _lastFrame;
@@ -27,13 +32,6 @@ public partial class MainWindow : Window
 
         if (_device is not null)
             await _device.DisposeAsync();
-
-        _settings = new DsoSettings
-        {
-            SampleRate = 100_000,
-            RecordLength = 4096,
-            TimePerDivisionSeconds = 0.001
-        };
 
         _device = new SimulatedDsoDevice();
         await _device.ConnectAsync();
