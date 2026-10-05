@@ -10,7 +10,7 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
     private const double VerifiedDecodedStreamRateHz = 5_000_000.0;
     private const int VerifiedDeepRecordSamples = 524_288;
 
-    private readonly Dso1102BridgeClient _bridge;
+    private readonly BridgeProcessClient _bridge;
     private DsoSettings _settings = new()
     {
         TimePerDivisionSeconds = VerifiedTimePerDivisionSeconds,
@@ -34,7 +34,7 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
 
     public VoltcraftDso1102Device(string? bridgeExe = null, string? dllPath = null)
     {
-        _bridge = new Dso1102BridgeClient(bridgeExe, dllPath);
+        _bridge = new BridgeProcessClient(bridgeExe, dllPath);
     }
 
     public DeviceInfo DeviceInfo => _deviceInfo;
@@ -197,8 +197,8 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
 
     public async ValueTask DisposeAsync()
     {
-        if (IsConnected)
-            await DisconnectAsync().ConfigureAwait(false);
+        IsConnected = false;
+        await _bridge.DisposeAsync().ConfigureAwait(false);
     }
 
     private static double[] DecodeAdcPayload(string? base64, int expectedSamples)
