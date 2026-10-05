@@ -146,4 +146,4 @@ bridge\DSO1102_Bridge_x86.exe
 
 next to the x64 controller. For custom layouts, set `DSO1102_BRIDGE_EXE` to the bridge executable path.
 
-The current real backend invokes the bridge as a separate process for each capture. This is intentionally conservative for the first functional integration; a persistent IPC bridge is the next performance optimization.
+The real backend uses the existing persistent x86 bridge server over redirected stdin/stdout. The bridge process stays alive across captures, so live acquisition avoids repeated process startup overhead.
