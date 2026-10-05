@@ -50,13 +50,6 @@ jobs:
       - name: Publish x86 call tracer
         run: dotnet publish .\src\DSO1102.Controller.CallTrace\DSO1102.Controller.CallTrace.csproj -c Release -r win-x86 --self-contained true --no-restore -o .\artifacts\DSO1102_CallTrace-win-x86
 
-      - name: Bundle x86 bridge with x64 controller
-        shell: pwsh
-        run: |
-          $target = '.\artifacts\DSO1102_Controller-win-x64\bridge'
-          New-Item -ItemType Directory -Force -Path $target | Out-Null
-          Copy-Item '.\artifacts\DSO1102_Bridge-win-x86\*' $target -Recurse -Force
-
       - uses: actions/upload-artifact@v4
         with:
           name: DSO1102_Controller-win-x64
