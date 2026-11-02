@@ -10,7 +10,7 @@ Windows-x64 controller and signal-analysis application for the Voltcraft DSO-110
 - PnP identity observed: USB\VID_04B5&PID_1102
 - Reported provider/manufacturer field: ODM
 
-The project does not send guessed USB commands. Real acquisition/control will only be enabled after the installed driver/API and protocol are verified.
+The project uses the original vendor DLL through an x86 bridge for the previously verified 1 ms/div capture profile. Other settings remain experimental. Native bridge calls require the exact DLL fingerprint documented in `docs/DLL_COMPLETE_ANALYSIS.md`.
 
 ## Current baseline
 
@@ -80,11 +80,11 @@ Current scope:
 - runtime-verified `1 ms/div` self-initialized capture profile;
 - CH1/CH2 raw frames returned as decoded ADC counts;
 - sentinel values are sanitized before signal analysis;
-- raw frames are decimated to the requested application frame length;
+- full records are retained for measurements/FFT; display-only min/max envelopes preserve spikes;
 - amplitude is explicitly labelled `ADC`, not volts;
 - Single and Run acquisition through one persistent x86 bridge process.
 
-The first real backend keeps one x86 bridge server alive for the whole device session, so repeated captures do not relaunch the helper process. It deliberately does **not** claim to set or know the current
+The first real backend keeps one x86 bridge server alive for the whole device session (recreated after cancellation or protocol failure), so repeated captures do not relaunch the helper process. It deliberately does **not** claim to set or know the current
 analog V/div/coupling state. The normal `frame-1ms-adc` command self-initializes
 the verified timebase path while preserving the existing analog front-end state.
 
@@ -120,3 +120,33 @@ For development builds, the bridge can also be selected explicitly:
 $env:DSO1102_BRIDGE_EXE = "D:\path\to\DSO1102_Bridge_x86.exe"
 $env:DSO1102_SDK_DLL = "C:\Program Files (x86)\DSO-1102 USB\DSO1102USB.dll"
 ```
+
+## Reliability and manufacturer review (2026-11-02)
+
+See [the repository audit](docs/AUDIT_2026-11-02.md) for findings, source URLs,
+current manufacturer-package evidence and remaining hardware acceptance work.
+
+- Commands time out after 15 seconds; cancellation stops the bridge process.
+- Connect, Run and Single are exclusive; Stop also cancels Single/Connect.
+- ADC data is validated over the complete record; repaired sentinel counts are visible.
+- FFT uses coherent-gain correction, includes Nyquist, and the GUI removes DC before windowing.
+- Hardware returns the complete record at the bridge's CAL-referenced stream rate.
+  `RecordLength` controls simulator length; it does not reprogram hardware memory.
+- The plot auto-scales each channel independently. Its grid is not a calibrated V/div or time/div scale.
+- The GUI Single button requests one forced capture; it is not a Normal/Single edge-trigger mode.
+
+Inspect a DLL **without loading it or accessing hardware**:
+
+```powershell
+.\tools\Run-HardwareProbe.ps1 -Command sdk-info
+```
+
+Run deterministic regression checks (no device, driver or vendor DLL needed):
+
+```powershell
+dotnet run --project .\tests\DSO1102.Controller.Tests -c Release
+```
+
+The Windows build workflow runs these checks before publishing. An unknown DLL
+is refused before `LoadLibraryExW`; matching export names alone do not prove ABI
+compatibility. No vendor binaries are distributed in this repository.

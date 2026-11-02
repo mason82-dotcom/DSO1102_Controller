@@ -140,28 +140,23 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
             throw new InvalidOperationException($"Unsupported bridge ADC encoding '{encoding}'.");
 
         var declaredCount = payload.GetProperty("sampleCountPerChannel").GetInt32();
-        var channel1 = DecodeChannel(
+        var channel1 = AdcPayloadDecoder.Decode(
             payload.GetProperty("channel1").GetString(),
             declaredCount);
-        var channel2 = DecodeChannel(
+        var channel2 = AdcPayloadDecoder.Decode(
             payload.GetProperty("channel2").GetString(),
             declaredCount);
 
-        var requestedCount = Math.Clamp(_settings.RecordLength, 32, declaredCount);
-        var reduced1 = Decimate(channel1, requestedCount, out var step1);
-        var reduced2 = Decimate(channel2, requestedCount, out var step2);
-
-        var sourceStep = Math.Max(step1, step2);
-        var effectiveRate = sourceStep > 0 ? sourceRate / sourceStep : sourceRate;
-
         return new AcquisitionFrame(
             DateTimeOffset.Now,
-            effectiveRate,
-            reduced1,
-            reduced2)
+            sourceRate,
+            channel1.Samples,
+            channel2.Samples)
         {
             SampleDomain = SampleDomain.AdcCounts,
-            IsAmplitudeCalibrated = false
+            IsAmplitudeCalibrated = false,
+            ReplacedSamplesChannel1 = channel1.ReplacedCount,
+            ReplacedSamplesChannel2 = channel2.ReplacedCount
         };
     }
 
@@ -173,7 +168,7 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
 
     private static void ValidateSupportedProfile(DsoSettings settings)
     {
-        if (Math.Abs(settings.TimePerDivisionSeconds - VerifiedTimePerDivisionSeconds) > 1e-12)
+        if (!double.IsFinite(settings.TimePerDivisionSeconds) || Math.Abs(settings.TimePerDivisionSeconds - VerifiedTimePerDivisionSeconds) > 1e-12)
         {
             throw new NotSupportedException(
                 "The first real-hardware backend currently exposes only the runtime-verified 1 ms/div profile.");
@@ -190,6 +185,10 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
             throw new NotSupportedException(
                 "The current verified frame command uses CH1 as the trigger source.");
         }
+
+        if (settings.TriggerSlope != TriggerSlope.Rising || settings.TriggerMode != TriggerMode.Auto ||
+            settings.TriggerLevelVolts != 0)
+            throw new NotSupportedException("The verified capture is forced-trigger only; programmable trigger mode, slope and voltage level are not exposed.");
 
         if (settings.RecordLength < 32)
             throw new ArgumentOutOfRangeException(nameof(settings), "RecordLength must be at least 32.");
@@ -215,7 +214,7 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
                 if (profile.TryGetProperty(name, out var rate) &&
                     rate.ValueKind == JsonValueKind.Number &&
                     rate.TryGetDouble(out var value) &&
-                    value > 0)
+                    double.IsFinite(value) && value > 0)
                 {
                     return value;
                 }
@@ -226,64 +225,4 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
             "The bridge frame did not contain a valid decoded-output sample rate.");
     }
 
-    private static double[] DecodeChannel(string? base64, int declaredCount)
-    {
-        if (string.IsNullOrWhiteSpace(base64))
-            throw new InvalidOperationException("The bridge frame contains an empty ADC payload.");
-
-        var bytes = Convert.FromBase64String(base64);
-        if ((bytes.Length & 1) != 0)
-            throw new InvalidOperationException("The bridge ADC payload has an odd byte length.");
-
-        var available = bytes.Length / sizeof(ushort);
-        if (declaredCount <= 0 || available < declaredCount)
-        {
-            throw new InvalidOperationException(
-                $"ADC payload length mismatch. Declared={declaredCount}, available={available}.");
-        }
-
-        var raw = new ushort[declaredCount];
-        Buffer.BlockCopy(bytes, 0, raw, 0, declaredCount * sizeof(ushort));
-
-        var firstValid = Array.FindIndex(raw, value => value <= 0x00FF);
-        if (firstValid < 0)
-            throw new InvalidOperationException("ADC payload contains no valid 8-bit samples.");
-
-        var fallback = (double)raw[firstValid];
-        var result = new double[declaredCount];
-        var previous = fallback;
-
-        for (var i = 0; i < raw.Length; i++)
-        {
-            if (raw[i] <= 0x00FF)
-                previous = raw[i];
-
-            result[i] = previous;
-        }
-
-        return result;
-    }
-
-    private static double[] Decimate(double[] source, int targetCount, out double sourceStep)
-    {
-        if (targetCount >= source.Length)
-        {
-            sourceStep = 1.0;
-            return source;
-        }
-
-        var result = new double[targetCount];
-        sourceStep = (source.Length - 1.0) / (targetCount - 1.0);
-
-        for (var i = 0; i < targetCount; i++)
-        {
-            var sourceIndex = Math.Min(
-                source.Length - 1,
-                (int)Math.Round(i * sourceStep));
-
-            result[i] = source[sourceIndex];
-        }
-
-        return result;
-    }
 }

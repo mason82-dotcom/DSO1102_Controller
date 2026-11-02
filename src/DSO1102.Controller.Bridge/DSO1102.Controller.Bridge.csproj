@@ -7,4 +7,7 @@
     <AssemblyName>DSO1102_Bridge_x86</AssemblyName>
     <RootNamespace>DSO1102.Controller.Bridge</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../DSO1102.Controller.Core/DSO1102.Controller.Core.csproj" />
+  </ItemGroup>
 </Project>
