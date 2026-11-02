@@ -34,6 +34,8 @@ public sealed record AcquisitionFrame(
     IReadOnlyList<double> Channel1,
     IReadOnlyList<double> Channel2)
 {
+    public int ReplacedSamplesChannel1 { get; init; }
+    public int ReplacedSamplesChannel2 { get; init; }
     public int SampleCount => Math.Min(Channel1.Count, Channel2.Count);
     public SampleDomain SampleDomain { get; init; } = SampleDomain.Volts;
     public bool IsAmplitudeCalibrated { get; init; } = true;

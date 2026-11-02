@@ -26,130 +26,112 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
     }
 
-    private async void ConnectSimulator_Click(object sender, RoutedEventArgs e)
-    {
-        await StopAcquisitionAsync();
+    private TaskCompletionSource? _operationCompletion;
+    private bool _closing;
+    private bool _closeReady;
 
+    private async void ConnectSimulator_Click(object sender, RoutedEventArgs e) =>
+        await RunOperationAsync(token => ConnectAsync(new SimulatedDsoDevice(), token));
+
+    private async void ConnectHardware_Click(object sender, RoutedEventArgs e) =>
+        await RunOperationAsync(token => ConnectAsync(new VoltcraftDso1102Device(), token));
+
+    private async Task ConnectAsync(IDsoDevice device, CancellationToken token)
+    {
         if (_device is not null)
             await _device.DisposeAsync();
-
-        _device = new SimulatedDsoDevice();
-        await _device.ConnectAsync();
-        await _device.ApplySettingsAsync(_settings);
-
-        DeviceHeaderText.Text = $"{_device.DeviceInfo.Name} — VID {_device.DeviceInfo.VendorId:X4} / PID {_device.DeviceInfo.ProductId:X4}";
-        StatusText.Text = "Simulator verbunden.";
-        RunButton.IsEnabled = true;
-        SingleButton.IsEnabled = true;
-
-        await AcquireAndRenderAsync(CancellationToken.None);
-    }
-
-    private async void ConnectHardware_Click(object sender, RoutedEventArgs e)
-    {
-        await StopAcquisitionAsync();
-
-        if (_device is not null)
-            await _device.DisposeAsync();
-
-        try
-        {
-            _device = new VoltcraftDso1102Device();
-            await _device.ConnectAsync();
-
-            var hardwareSettings = _settings with
-            {
-                TimePerDivisionSeconds = 0.001,
-                Channel1Enabled = true,
-                Channel2Enabled = true,
-                Channel1VoltsPerDivision = 1.0,
-                Channel2VoltsPerDivision = 1.0,
-                TriggerSource = TriggerSource.Channel1,
-                TriggerSlope = TriggerSlope.Rising
-            };
-
-            await _device.ApplySettingsAsync(hardwareSettings);
-
-            DeviceHeaderText.Text =
-                $"{_device.DeviceInfo.Name} — VID {_device.DeviceInfo.VendorId:X4} / PID {_device.DeviceInfo.ProductId:X4}" +
-                (string.IsNullOrWhiteSpace(_device.DeviceInfo.Firmware)
-                    ? string.Empty
-                    : $" — {_device.DeviceInfo.Firmware}");
-
-            StatusText.Text =
-                "DSO-1102 verbunden. 1 ms/div, ADC-Counts; persistenter x86-Bridge-Server aktiv. Analog-Frontend bleibt im aktuellen Gerätezustand.";
-
-            RunButton.IsEnabled = true;
-            SingleButton.IsEnabled = true;
-
-            await AcquireAndRenderAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            if (_device is not null)
-            {
-                await _device.DisposeAsync();
-                _device = null;
-            }
-
-            RunButton.IsEnabled = false;
-            SingleButton.IsEnabled = false;
-            StopButton.IsEnabled = false;
-            StatusText.Text = $"DSO-1102 Verbindung fehlgeschlagen: {ex.Message}";
-        }
+        _device = device;
+        ClearFrame();
+        DeviceHeaderText.Text = "Verbindung wird aufgebaut …";
+        await device.ConnectAsync(token);
+        await device.ApplySettingsAsync(_settings, token);
+        DeviceHeaderText.Text = $"{device.DeviceInfo.Name} — {device.DeviceInfo.Firmware}";
+        await AcquireAndRenderAsync(token);
     }
 
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
-        if (_device is null || !_device.IsConnected || _runCancellation is not null)
-            return;
-
-        _runCancellation = new CancellationTokenSource();
-        RunButton.IsEnabled = false;
-        SingleButton.IsEnabled = false;
-        StopButton.IsEnabled = true;
-
-        try
+        if (_device?.IsConnected != true) return;
+        await RunOperationAsync(async token =>
         {
-            while (!_runCancellation.Token.IsCancellationRequested)
+            while (true)
             {
-                await AcquireAndRenderAsync(_runCancellation.Token);
-                await Task.Delay(40, _runCancellation.Token);
+                token.ThrowIfCancellationRequested();
+                await AcquireAndRenderAsync(token);
+                await Task.Delay(40, token);
             }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            _runCancellation.Dispose();
-            _runCancellation = null;
-            RunButton.IsEnabled = _device?.IsConnected == true;
-            SingleButton.IsEnabled = _device?.IsConnected == true;
-            StopButton.IsEnabled = false;
-        }
+        });
     }
 
     private async void Single_Click(object sender, RoutedEventArgs e)
     {
         if (_device?.IsConnected == true)
-            await AcquireAndRenderAsync(CancellationToken.None);
+            await RunOperationAsync(AcquireAndRenderAsync);
     }
 
-    private async void Stop_Click(object sender, RoutedEventArgs e)
+    private async Task RunOperationAsync(Func<CancellationToken, Task> action)
     {
-        await StopAcquisitionAsync();
-        StatusText.Text = "Erfassung gestoppt.";
+        if (_runCancellation is not null || _closing) return;
+        using var cancellation = new CancellationTokenSource();
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runCancellation = cancellation;
+        _operationCompletion = completion;
+        UpdateButtons();
+        StatusText.Text = "Erfassung / Verbindung läuft …";
+        try
+        {
+            await action(cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            ClearFrame();
+            StatusText.Text = "Vorgang abgebrochen.";
+        }
+        catch (Exception ex)
+        {
+            ClearFrame();
+            StatusText.Text = $"Fehler: {ex.Message} — bitte erneut verbinden.";
+            var device = _device;
+            _device = null;
+            DeviceHeaderText.Text = "Nicht verbunden";
+            if (device is not null)
+            {
+                try { await device.DisposeAsync(); }
+                catch (Exception cleanup) { StatusText.Text += $" Bereinigung: {cleanup.Message}"; }
+            }
+        }
+        finally
+        {
+            _runCancellation = null;
+            _operationCompletion = null;
+            UpdateButtons();
+            completion.TrySetResult();
+        }
     }
+
+    private void UpdateButtons()
+    {
+        var idle = _runCancellation is null && !_closing;
+        ConnectSimulatorButton.IsEnabled = idle;
+        ConnectHardwareButton.IsEnabled = idle;
+        RunButton.IsEnabled = SingleButton.IsEnabled = idle && _device?.IsConnected == true;
+        StopButton.IsEnabled = !idle && !_closing;
+    }
+
+    private void ClearFrame()
+    {
+        _lastFrame = null;
+        Ch1MeasurementsText.Text = Ch2MeasurementsText.Text = FftText.Text = "—";
+        DrawScope();
+    }
+
+    private async void Stop_Click(object sender, RoutedEventArgs e) => await StopAcquisitionAsync();
 
     private async Task StopAcquisitionAsync()
     {
-        if (_runCancellation is null)
-            return;
-
-        _runCancellation.Cancel();
-        while (_runCancellation is not null)
-            await Task.Delay(10);
+        var completion = _operationCompletion;
+        _runCancellation?.Cancel();
+        if (completion is not null) await completion.Task;
     }
 
     private async Task AcquireAndRenderAsync(CancellationToken cancellationToken)
@@ -157,21 +139,25 @@ public partial class MainWindow : Window
         if (_device is null)
             return;
 
-        _lastFrame = await _device.AcquireAsync(cancellationToken);
-
-        var ch1 = SignalAnalyzer.Measure(_lastFrame.Channel1, _lastFrame.SampleRate);
-        var ch2 = SignalAnalyzer.Measure(_lastFrame.Channel2, _lastFrame.SampleRate);
-        var peak = FftAnalyzer.Analyze(_lastFrame.Channel1, _lastFrame.SampleRate)
-            .Skip(1)
-            .OrderByDescending(x => x.Amplitude)
-            .FirstOrDefault();
+        var frame = await _device.AcquireAsync(cancellationToken);
+        var analysis = await Task.Run(() =>
+        {
+            var ch1 = SignalAnalyzer.Measure(frame.Channel1, frame.SampleRate);
+            var ch2 = SignalAnalyzer.Measure(frame.Channel2, frame.SampleRate);
+            var peak = FftAnalyzer.Analyze(frame.Channel1, frame.SampleRate, removeMean: true)
+                .Skip(1).MaxBy(x => x.Amplitude);
+            return (ch1, ch2, peak);
+        }, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        _lastFrame = frame;
+        var (ch1, ch2, peak) = analysis;
 
         Ch1MeasurementsText.Text = FormatMeasurements(ch1, _lastFrame.SampleDomain);
         Ch2MeasurementsText.Text = FormatMeasurements(ch2, _lastFrame.SampleDomain);
         var amplitudeUnit = _lastFrame.SampleDomain == SampleDomain.Volts ? "V" : "ADC";
         FftText.Text = peak is null ? "—" : $"Peak {FormatFrequency(peak.FrequencyHz)}\nAmp  {peak.Amplitude:F3} {amplitudeUnit}";
         var calibrationState = _lastFrame.IsAmplitudeCalibrated ? "kalibriert" : "unkalibrierte ADC-Domain";
-        StatusText.Text = $"Capture {_lastFrame.Timestamp:HH:mm:ss.fff} — {_lastFrame.SampleCount} Samples — {calibrationState}";
+        StatusText.Text = $"Capture {_lastFrame.Timestamp:HH:mm:ss.fff} — {_lastFrame.SampleCount} Samples — {calibrationState} — Ersatzwerte CH1/CH2: {_lastFrame.ReplacedSamplesChannel1}/{_lastFrame.ReplacedSamplesChannel2}";
         DrawScope();
     }
 
@@ -233,26 +219,33 @@ public partial class MainWindow : Window
 
         var maxAbs = Math.Max(1.0, samples.Max(Math.Abs));
         var scaleY = height * 0.42 / maxAbs;
-        var drawCount = Math.Min(samples.Count, Math.Max(2, (int)width));
-        var sourceStep = (samples.Count - 1.0) / (drawCount - 1.0);
-
+        var points = WaveformEnvelope.Create(samples, Math.Max(1, (int)width));
         var trace = new Polyline { Stroke = new SolidColorBrush(color), StrokeThickness = 1.4 };
-
-        for (var i = 0; i < drawCount; i++)
-        {
-            var index = Math.Min(samples.Count - 1, (int)Math.Round(i * sourceStep));
+        foreach (var point in points)
             trace.Points.Add(new Point(
-                i * width / (drawCount - 1.0),
-                height / 2.0 - samples[index] * scaleY));
-        }
+                point.SampleIndex * width / (samples.Count - 1.0),
+                height / 2.0 - point.Value * scaleY));
 
         ScopeCanvas.Children.Add(trace);
     }
 
     private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        await StopAcquisitionAsync();
-        if (_device is not null)
-            await _device.DisposeAsync();
+        if (_closeReady) return;
+        e.Cancel = true;
+        if (_closing) return;
+        _closing = true;
+        UpdateButtons();
+        try
+        {
+            await StopAcquisitionAsync();
+            if (_device is not null) await _device.DisposeAsync();
+        }
+        catch (Exception ex) { StatusText.Text = $"Beenden: {ex.Message}"; }
+        finally
+        {
+            _closeReady = true;
+            Close();
+        }
     }
 }

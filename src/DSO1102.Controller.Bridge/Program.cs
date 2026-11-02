@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using DSO1102.Controller.Core.Models;
 
 namespace DSO1102.Controller.Bridge;
 
@@ -127,6 +128,7 @@ internal static class Program
     private static int ExecuteCommand(string command, string dllPath) =>
         command switch
         {
+            "sdk-info" => InspectSdk(dllPath),
             "probe" => Probe(dllPath),
             "info" => ReadDeviceInfo(dllPath),
             "arm" => ArmAndObserve(dllPath, forceTrigger: false),
@@ -195,6 +197,13 @@ internal static class Program
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
             "DSO-1102 USB",
             "DSO1102USB.dll");
+    }
+
+    private static int InspectSdk(string dllPath)
+    {
+        var identity = VendorSdkIdentity.Inspect(dllPath);
+        WriteJson(new { ok = true, command = "sdk-info", dllPath, identity, hardwareCallsMade = false });
+        return 0;
     }
 
     private static int Probe(string dllPath)
@@ -1839,6 +1848,7 @@ internal static class Program
             if (!File.Exists(path))
                 throw new FileNotFoundException("DSO1102 vendor DLL was not found.", path);
 
+            VendorSdkIdentity.RequireKnownBinary(path);
             var module = LoadLibraryExW(path, IntPtr.Zero, LoadWithAlteredSearchPath);
             if (module == IntPtr.Zero)
                 throw new System.ComponentModel.Win32Exception(

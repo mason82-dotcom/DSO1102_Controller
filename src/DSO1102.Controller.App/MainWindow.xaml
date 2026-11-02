@@ -15,8 +15,8 @@
         <Border Grid.Row="0" Background="#171A20" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6" Padding="8">
             <DockPanel>
                 <StackPanel Orientation="Horizontal">
-                    <Button Content="Simulator verbinden" Margin="4" Padding="12,7" Click="ConnectSimulator_Click"/>
-                    <Button Content="DSO-1102 verbinden" Margin="4" Padding="12,7" Click="ConnectHardware_Click"/>
+                    <Button x:Name="ConnectSimulatorButton" Content="Simulator verbinden" Margin="4" Padding="12,7" Click="ConnectSimulator_Click"/>
+                    <Button x:Name="ConnectHardwareButton" Content="DSO-1102 verbinden" Margin="4" Padding="12,7" Click="ConnectHardware_Click"/>
                     <Button x:Name="RunButton" Content="Run" Margin="4" Padding="12,7" Click="Run_Click" IsEnabled="False"/>
                     <Button x:Name="SingleButton" Content="Single" Margin="4" Padding="12,7" Click="Single_Click" IsEnabled="False"/>
                     <Button x:Name="StopButton" Content="Stop" Margin="4" Padding="12,7" Click="Stop_Click" IsEnabled="False"/>
@@ -43,7 +43,7 @@
                         <TextBlock x:Name="Ch1MeasurementsText" Foreground="#E7EAF0" FontFamily="Consolas" Text="—" Margin="0,4,0,12"/>
                         <TextBlock Text="CH2" Foreground="#55D7FF" FontWeight="Bold"/>
                         <TextBlock x:Name="Ch2MeasurementsText" Foreground="#E7EAF0" FontFamily="Consolas" Text="—" Margin="0,4,0,12"/>
-                        <TextBlock Text="FFT CH1" Foreground="#E7EAF0" FontWeight="Bold"/>
+                        <TextBlock Text="FFT CH1 (AC, Spitzenamplitude)" Foreground="#E7EAF0" FontWeight="Bold"/>
                         <TextBlock x:Name="FftText" Foreground="#E7EAF0" FontFamily="Consolas" Text="—"/>
                     </StackPanel>
                 </Border>
@@ -62,7 +62,7 @@
         </Grid>
 
         <Border Grid.Row="2" Background="#171A20" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6" Padding="7">
-            <TextBlock x:Name="StatusText" Foreground="#E7EAF0"
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="#E7EAF0"
                        Text="Bereit. DSO-1102 Identität: VID 04B5 / PID 1102."/>
         </Border>
     </Grid>
