@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- Literal expectation arrays read better inline in tests. -->
+    <NoWarn>$(NoWarn);CA1861</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/DSO1102.Controller.Hardware/DSO1102.Controller.Hardware.csproj" />

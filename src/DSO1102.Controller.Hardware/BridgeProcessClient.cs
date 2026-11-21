@@ -57,7 +57,7 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
 
             if (string.IsNullOrWhiteSpace(response))
             {
-                var exit = process.HasExited ? process.ExitCode.ToString() : "(running)";
+                var exit = process.HasExited ? process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "(running)";
                 throw new InvalidOperationException(
                     $"DSO1102 bridge server returned no JSON for '{command}'. ExitCode={exit}. STDERR: {ReadStderr()}");
             }

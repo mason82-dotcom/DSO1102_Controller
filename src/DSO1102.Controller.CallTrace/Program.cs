@@ -20,6 +20,8 @@ internal static class Program
     private const uint ContextControl = ContextI386 | 0x00000001;
     private const uint ContextInteger = ContextI386 | 0x00000002;
 
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
+
     private static int Main(string[] args)
     {
         try
@@ -53,17 +55,17 @@ internal static class Program
             if (!File.Exists(dllPath))
                 throw new FileNotFoundException("Vendor DLL not found.", dllPath);
             if (argCount is < 1 or > 16)
-                throw new ArgumentOutOfRangeException(nameof(argCount), "Argument count must be 1..16.");
+                throw new ArgumentException("--args: Argument count must be 1..16.", nameof(args));
             if (maxCalls is < 1 or > 128)
-                throw new ArgumentOutOfRangeException(nameof(maxCalls), "Max calls must be 1..128.");
+                throw new ArgumentException("--max-calls: Max calls must be 1..128.", nameof(args));
             if (idleTimeoutMs is < 1_000 or > 900_000)
-                throw new ArgumentOutOfRangeException(nameof(idleTimeoutMs), "Idle timeout must be 1000..900000 ms.");
+                throw new ArgumentException("--idle-timeout-ms: Idle timeout must be 1000..900000 ms.", nameof(args));
             if (totalTimeoutMs is < 1_000 or > 1_800_000)
-                throw new ArgumentOutOfRangeException(nameof(totalTimeoutMs), "Total timeout must be 1000..1800000 ms.");
+                throw new ArgumentException("--total-timeout-ms: Total timeout must be 1000..1800000 ms.", nameof(args));
             if (distinctPointerArg is < 0 or > 16)
-                throw new ArgumentOutOfRangeException(nameof(distinctPointerArg), "Distinct pointer argument must be 0..16.");
+                throw new ArgumentException("--distinct-pointer-arg: Distinct pointer argument must be 0..16.", nameof(args));
             if (distinctScalarArg is < 0 or > 16)
-                throw new ArgumentOutOfRangeException(nameof(distinctScalarArg), "Distinct scalar argument must be 0..16.");
+                throw new ArgumentException("--distinct-scalar-arg: Distinct scalar argument must be 0..16.", nameof(args));
             var distinctFilterCount =
                 (distinctPointerArg > 0 ? 1 : 0) +
                 (distinctScalarArg > 0 ? 1 : 0) +
@@ -76,7 +78,7 @@ internal static class Program
                 throw new EntryPointNotFoundException($"Export '{exportName}' not found in '{dllPath}'.");
 
             var result = TraceCalls(exePath, dllPath, exportName, exportRva, argCount, maxCalls, idleTimeoutMs, totalTimeoutMs, distinctPointerArg, distinctScalarArg, distinctLow16Signature);
-            Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Console.WriteLine(JsonSerializer.Serialize(result, IndentedJson));
             return result.Calls.Count > 0 ? 0 : 2;
         }
         catch (Exception ex)
@@ -85,7 +87,7 @@ internal static class Program
             {
                 ok = false,
                 error = ex.ToString()
-            }, new JsonSerializerOptions { WriteIndented = true }));
+            }, IndentedJson));
             return 1;
         }
     }
@@ -340,7 +342,7 @@ internal static class Program
                                         ",",
                                         snapshots
                                             .OrderBy(x => x.Index)
-                                            .Select(x => x.Low16.ToString("X4")));
+                                            .Select(x => x.Low16.ToString("X4", System.Globalization.CultureInfo.InvariantCulture)));
 
                                     if (currentSignature == lastDistinctLow16Signature)
                                     {
