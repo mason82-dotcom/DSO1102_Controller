@@ -12,17 +12,55 @@ Windows-x64 controller and signal-analysis application for the Voltcraft DSO-110
 
 The project uses the original vendor DLL through an x86 bridge for the previously verified 1 ms/div capture profile. Other settings remain experimental. Native bridge calls require the exact DLL fingerprint documented in `docs/DLL_COMPLETE_ANALYSIS.md`.
 
-## Current baseline
+## Features
 
-- .NET 8 / WPF x64 application
-- CH1 + CH2 acquisition model
-- live oscilloscope display
-- Vmin, Vmax, Vpp, mean, RMS, frequency and period
-- FFT engine
-- simulator backend for immediate development/testing
-- hardware abstraction for the real DSO-1102-USB
-- Windows USB/PnP diagnostic helper
-- Windows CI build and self-contained win-x64 artifact
+- .NET 8 / WPF x64 application with a separate x86 bridge process for the 32-bit vendor DLL
+- CH1 + CH2 acquisition: full 524,288-sample record per channel at the CAL-referenced ~5 MS/s
+- **Time base as a window of the record:** 5 µs/div … 10 ms/div (1-2-5). The instrument stays in
+  the runtime-verified 1 ms/div profile; the decoded stream rate is the same for all verified
+  hardware time bases (see `docs/REVERSE_ENGINEERING.md`, "Verified time-base summary").
+- **Software trigger** on the captured record: source CH1/CH2, rising/falling, level with
+  hysteresis, trigger position 0–100 %, modes Auto (record centre without edge) and Normal
+  (frames without edge never replace the display). Single in Normal mode captures until an edge
+  is found. The device itself is still force-triggered; the UI labels this explicitly.
+- Per-channel display scale and centre line; nominal default 32 ADC/div around code 128
+- Measurements of the visible window: frequency/period/duty cycle (mid-level crossings with
+  hysteresis and an ADC noise floor), peak-to-peak, min, max, mean, RMS, AC-RMS
+- Spectrum (FFT over up to 2^19 samples, selectable window, span tied to the time base)
+- Two time cursors with Δt, 1/Δt and channel values
+- Export of the visible window or the full record as CSV (invariant culture, metadata header)
+  and of the scope area as PNG
+- View settings are stored per sample domain in `%APPDATA%\DSO1102_Controller\settings.json`
+- Simulator backend (1 kHz CAL-like square on CH1, 2.5 kHz sine on CH2, random phase, noise)
+- Regression tests without hardware (`tests/DSO1102.Controller.Tests`)
+
+Amplitudes from the real device are **uncalibrated ADC codes**. V/div, coupling and offset are
+not set by the controller and remain in the current device state (see "Experimental real-hardware
+backend" below).
+
+### Keyboard
+
+| Key | Action |
+|---|---|
+| F5 | Start continuous acquisition |
+| F6 | Single acquisition |
+| Esc | Stop acquisition / remove cursors |
+| Ctrl+S | Save visible window as CSV |
+| Ctrl+1 / Ctrl+2 | Place cursor A / B at the trigger point |
+| Ctrl+← / → | Move cursor B by 0.1 div (with Shift: cursor A) |
+
+Mouse: left click sets cursor A, right click sets cursor B.
+
+## Tests
+
+~~~powershell
+dotnet run --project .\tests\DSO1102.Controller.Tests -c Release
+~~~
+
+The runner checks DSP, trigger/window logic, CSV/settings handling, payload decoding and the
+bridge process lifecycle with a fake bridge child process. It never touches the instrument and
+also runs on Linux. The WPF projects can be compiled on Linux with
+`-p:EnableWindowsTargeting=true`.
 
 ## Build
 

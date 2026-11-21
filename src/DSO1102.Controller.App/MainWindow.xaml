@@ -1,69 +1,246 @@
 <Window x:Class="DSO1102.Controller.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DSO1102 Controller" Height="820" Width="1380"
-        MinHeight="620" MinWidth="1000"
+        Title="DSO1102 Controller" Height="860" Width="1440"
+        MinHeight="640" MinWidth="1100"
         Background="#0E1014"
-        WindowStartupLocation="CenterScreen">
-    <Grid Margin="10">
+        WindowStartupLocation="CenterScreen"
+        KeyDown="Window_KeyDown">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PanelBrush" Color="#171A20"/>
+        <SolidColorBrush x:Key="BorderLineBrush" Color="#343A46"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#E7EAF0"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#AEB5C0"/>
+
+        <Style x:Key="Panel" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderLineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style x:Key="Heading" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="Label">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+        <Style x:Key="Mono" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Padding" Value="6,4"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="Slider">
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="IsMoveToPointEnabled" Value="True"/>
+        </Style>
+        <Style x:Key="ToolButton" TargetType="Button">
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="MinHeight" Value="32"/>
+        </Style>
+        <Style x:Key="PanelButton" TargetType="Button">
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#171A20" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6" Padding="8">
-            <DockPanel>
-                <StackPanel Orientation="Horizontal">
-                    <Button x:Name="ConnectSimulatorButton" Content="Simulator verbinden" Margin="4" Padding="12,7" Click="ConnectSimulator_Click"/>
-                    <Button x:Name="ConnectHardwareButton" Content="DSO-1102 verbinden" Margin="4" Padding="12,7" Click="ConnectHardware_Click"/>
-                    <Button x:Name="RunButton" Content="Run" Margin="4" Padding="12,7" Click="Run_Click" IsEnabled="False"/>
-                    <Button x:Name="SingleButton" Content="Single" Margin="4" Padding="12,7" Click="Single_Click" IsEnabled="False"/>
-                    <Button x:Name="StopButton" Content="Stop" Margin="4" Padding="12,7" Click="Stop_Click" IsEnabled="False"/>
+        <!-- Toolbar -->
+        <Border Grid.Row="0" Style="{StaticResource Panel}" Padding="8">
+            <DockPanel LastChildFill="True">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button x:Name="ConnectSimulatorButton" Content="Simulator verbinden" Style="{StaticResource ToolButton}"
+                            Click="ConnectSimulator_Click" ToolTip="Verbindet die eingebaute Signalquelle (keine Hardware)"/>
+                    <Button x:Name="ConnectHardwareButton" Content="DSO-1102 verbinden" Style="{StaticResource ToolButton}"
+                            Click="ConnectHardware_Click" ToolTip="Verbindet das Oszilloskop über die x86-Bridge und die Hersteller-DLL"/>
+                    <Rectangle Width="1" Fill="{StaticResource BorderLineBrush}" Margin="4,2,12,2"/>
+                    <Button x:Name="RunButton" Content="Fortlaufend erfassen" Style="{StaticResource ToolButton}"
+                            Click="Run_Click" IsEnabled="False" ToolTip="Fortlaufende Erfassung starten (F5)"/>
+                    <Button x:Name="SingleButton" Content="Einzeln erfassen" Style="{StaticResource ToolButton}"
+                            Click="Single_Click" IsEnabled="False" ToolTip="Eine Aufnahme; im Modus Normal bis zum ersten Trigger (F6)"/>
+                    <Button x:Name="StopButton" Content="Anhalten" Style="{StaticResource ToolButton}"
+                            Click="Stop_Click" IsEnabled="False" ToolTip="Erfassung oder Verbindungsaufbau abbrechen (Esc)"/>
+                    <Button x:Name="DisconnectButton" Content="Trennen" Style="{StaticResource ToolButton}"
+                            Click="Disconnect_Click" IsEnabled="False" ToolTip="Verbindung beenden und Bridge-Prozess schließen"/>
                 </StackPanel>
-                <TextBlock x:Name="DeviceHeaderText" Foreground="#E7EAF0" VerticalAlignment="Center"
-                           HorizontalAlignment="Right" Text="VID 04B5 / PID 1102"/>
+                <TextBlock x:Name="DeviceHeaderText" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"
+                           HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Text="Nicht verbunden"/>
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="1" Margin="0,10">
+        <Grid Grid.Row="1" Margin="0,4,0,4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="320"/>
+                <ColumnDefinition Width="340"/>
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="#080A0E" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6">
-                <Canvas x:Name="ScopeCanvas" ClipToBounds="True" SizeChanged="ScopeCanvas_SizeChanged"/>
-            </Border>
-
-            <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                <Border Background="#171A20" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6" Padding="12">
-                    <StackPanel>
-                        <TextBlock Text="CH1" Foreground="#FFD84D" FontWeight="Bold"/>
-                        <TextBlock x:Name="Ch1MeasurementsText" Foreground="#E7EAF0" FontFamily="Consolas" Text="—" Margin="0,4,0,12"/>
-                        <TextBlock Text="CH2" Foreground="#55D7FF" FontWeight="Bold"/>
-                        <TextBlock x:Name="Ch2MeasurementsText" Foreground="#E7EAF0" FontFamily="Consolas" Text="—" Margin="0,4,0,12"/>
-                        <TextBlock Text="FFT CH1 (AC, Spitzenamplitude)" Foreground="#E7EAF0" FontWeight="Bold"/>
-                        <TextBlock x:Name="FftText" Foreground="#E7EAF0" FontFamily="Consolas" Text="—"/>
-                    </StackPanel>
+            <!-- Scope and spectrum -->
+            <Grid x:Name="ScopeArea" Grid.Column="0" Background="#0E1014">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition x:Name="SpectrumRow" Height="200"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="#080A0E" BorderBrush="{StaticResource BorderLineBrush}" BorderThickness="1" CornerRadius="6">
+                    <Canvas x:Name="ScopeCanvas" ClipToBounds="True" Background="Transparent"
+                            SizeChanged="Canvas_SizeChanged"
+                            MouseLeftButtonDown="ScopeCanvas_MouseLeftButtonDown"
+                            MouseRightButtonDown="ScopeCanvas_MouseRightButtonDown"
+                            ToolTip="Linksklick: Cursor A setzen · Rechtsklick: Cursor B setzen"/>
                 </Border>
-
-                <Border Background="#171A20" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,10,0,0">
-                    <StackPanel>
-                        <TextBlock Text="GERÄT" Foreground="#E7EAF0" FontWeight="Bold"/>
-                        <TextBlock Text="DSO1102 USB DRIVER 2" Foreground="#E7EAF0" Margin="0,8,0,0"/>
-                        <TextBlock Text="USB\VID_04B5&amp;PID_1102" Foreground="#AEB5C0"/>
-                        <TextBlock Text="ODM" Foreground="#AEB5C0"/>
-                        <TextBlock Text="Real-Backend: verifizierter 1-ms/div-Rohframepfad via x86 Vendor-DLL-Bridge."
-                                   Foreground="#AEB5C0" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                    </StackPanel>
+                <Border Grid.Row="1" Margin="0,8,0,0" Background="#080A0E" BorderBrush="{StaticResource BorderLineBrush}" BorderThickness="1" CornerRadius="6">
+                    <Canvas x:Name="SpectrumCanvas" ClipToBounds="True" SizeChanged="Canvas_SizeChanged"/>
                 </Border>
-            </StackPanel>
+            </Grid>
+
+            <!-- Controls -->
+            <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Horizontal" Style="{StaticResource Heading}"/>
+                            <Label Content="_Zeitbasis" Target="{Binding ElementName=TimeBaseCombo}" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="TimeBaseCombo" SelectionChanged="ViewSetting_Changed"
+                                      ToolTip="Wählt einen Ausschnitt des aufgenommenen Records; das Gerät bleibt im geprüften 1-ms/div-Profil"/>
+                            <Label x:Name="TriggerPositionLabel" Content="_Triggerposition: 50 %" Target="{Binding ElementName=TriggerPositionSlider}" Style="{StaticResource FieldLabel}"/>
+                            <Slider x:Name="TriggerPositionSlider" Minimum="0" Maximum="100" Value="50" SmallChange="1" LargeChange="10"
+                                    TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="ViewSetting_Changed"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Software-Trigger" Style="{StaticResource Heading}"/>
+                            <TextBlock Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8" FontSize="11"
+                                       Text="Richtet die Anzeige an einer Flanke im aufgenommenen Record aus. Das Gerät selbst wird weiterhin per Force-Trigger ausgelöst."/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <Label Content="M_odus" Target="{Binding ElementName=TriggerModeCombo}" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox x:Name="TriggerModeCombo" SelectionChanged="ViewSetting_Changed">
+                                        <ComboBoxItem Content="Auto" ToolTip="Ohne Flanke wird die Recordmitte angezeigt"/>
+                                        <ComboBoxItem Content="Normal" ToolTip="Nur Aufnahmen mit Flanke ersetzen die Anzeige"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <Label Content="_Quelle" Target="{Binding ElementName=TriggerSourceCombo}" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox x:Name="TriggerSourceCombo" SelectionChanged="ViewSetting_Changed">
+                                        <ComboBoxItem Content="CH1"/>
+                                        <ComboBoxItem Content="CH2"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
+                            <Label Content="_Flanke" Target="{Binding ElementName=TriggerSlopeCombo}" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="TriggerSlopeCombo" SelectionChanged="ViewSetting_Changed">
+                                <ComboBoxItem Content="Steigend"/>
+                                <ComboBoxItem Content="Fallend"/>
+                            </ComboBox>
+                            <Label x:Name="TriggerLevelLabel" Content="_Pegel: 128 ADC" Target="{Binding ElementName=TriggerLevelSlider}" Style="{StaticResource FieldLabel}"/>
+                            <Slider x:Name="TriggerLevelSlider" Minimum="0" Maximum="255" Value="128" SmallChange="1" LargeChange="8"
+                                    ValueChanged="ViewSetting_Changed"/>
+                            <Button Content="Pegel auf Signalmitte setzen" Style="{StaticResource PanelButton}" Click="TriggerLevelToMid_Click"
+                                    ToolTip="Setzt den Pegel auf die Mitte zwischen Minimum und Maximum der Triggerquelle"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Kanäle (Anzeige)" Style="{StaticResource Heading}"/>
+                            <CheckBox x:Name="Ch1VisibleCheck" Content="CH1 anzeigen" Foreground="#FFD84D" IsChecked="True" Click="ViewSetting_Changed"/>
+                            <Label Content="CH1 Skal_a pro Teilung" Target="{Binding ElementName=Ch1ScaleCombo}" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="Ch1ScaleCombo" SelectionChanged="ViewSetting_Changed"/>
+                            <Label x:Name="Ch1CenterLabel" Content="CH1 _Mittellinie: 128" Target="{Binding ElementName=Ch1CenterSlider}" Style="{StaticResource FieldLabel}"/>
+                            <Slider x:Name="Ch1CenterSlider" ValueChanged="ViewSetting_Changed"/>
+                            <CheckBox x:Name="Ch2VisibleCheck" Content="CH2 anzeigen" Foreground="#55D7FF" IsChecked="True" Click="ViewSetting_Changed" Margin="0,4,0,8"/>
+                            <Label Content="CH2 Ska_la pro Teilung" Target="{Binding ElementName=Ch2ScaleCombo}" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="Ch2ScaleCombo" SelectionChanged="ViewSetting_Changed"/>
+                            <Label x:Name="Ch2CenterLabel" Content="CH2 M_ittellinie: 128" Target="{Binding ElementName=Ch2CenterSlider}" Style="{StaticResource FieldLabel}"/>
+                            <Slider x:Name="Ch2CenterSlider" ValueChanged="ViewSetting_Changed"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Messwerte (sichtbares Fenster)" Style="{StaticResource Heading}"/>
+                            <TextBlock Text="CH1" Foreground="#FFD84D" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="Ch1MeasurementsText" Style="{StaticResource Mono}" Text="—" Margin="0,4,0,12"/>
+                            <TextBlock Text="CH2" Foreground="#55D7FF" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="Ch2MeasurementsText" Style="{StaticResource Mono}" Text="—" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Spektrum (Triggerquelle)" Style="{StaticResource Heading}"/>
+                            <CheckBox x:Name="SpectrumVisibleCheck" Content="Spektrum anzeigen" IsChecked="True" Click="ViewSetting_Changed"/>
+                            <Label Content="F_ensterfunktion" Target="{Binding ElementName=FftWindowCombo}" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="FftWindowCombo" SelectionChanged="ViewSetting_Changed"/>
+                            <TextBlock x:Name="FftText" Style="{StaticResource Mono}" Text="—"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Cursor" Style="{StaticResource Heading}"/>
+                            <TextBlock x:Name="CursorText" Style="{StaticResource Mono}" TextWrapping="Wrap"
+                                       Text="Linksklick setzt A, Rechtsklick setzt B."/>
+                            <TextBlock Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Text="Tastatur: Strg+1 / Strg+2 setzt A / B auf den Triggerpunkt, Strg+← → verschiebt B, Strg+Umschalt+← → verschiebt A."/>
+                            <Button x:Name="ClearCursorsButton" Content="Cursor entfernen" Style="{StaticResource PanelButton}" Margin="0,8,0,0"
+                                    Click="ClearCursors_Click" IsEnabled="False"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Export" Style="{StaticResource Heading}"/>
+                            <Button x:Name="ExportWindowCsvButton" Content="Fenster als CSV speichern …" Style="{StaticResource PanelButton}"
+                                    Click="ExportWindowCsv_Click" IsEnabled="False" ToolTip="Sichtbarer Ausschnitt, Zeit relativ zum Trigger (Strg+S)"/>
+                            <Button x:Name="ExportRecordCsvButton" Content="Ganzen Record als CSV speichern …" Style="{StaticResource PanelButton}"
+                                    Click="ExportRecordCsv_Click" IsEnabled="False" ToolTip="Alle Samples beider Kanäle (bis 524 288 Zeilen)"/>
+                            <Button x:Name="ExportPngButton" Content="Bild als PNG speichern …" Style="{StaticResource PanelButton}"
+                                    Click="ExportPng_Click" IsEnabled="False" Margin="0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Gerät" Style="{StaticResource Heading}"/>
+                            <TextBlock Text="Voltcraft DSO-1102-USB · USB\VID_04B5&amp;PID_1102" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="DeviceDetailText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                       Text="Real-Backend: geprüftes 1-ms/div-Profil (ca. 5 MS/s, 524 288 Samples je Kanal) über die x86-Bridge. Amplituden sind unkalibrierte ADC-Werte; V/div und Kopplung bleiben im aktuellen Gerätezustand."/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
 
-        <Border Grid.Row="2" Background="#171A20" BorderBrush="#343A46" BorderThickness="1" CornerRadius="6" Padding="7">
-            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Foreground="#E7EAF0"
-                       Text="Bereit. DSO-1102 Identität: VID 04B5 / PID 1102."/>
+        <Border Grid.Row="2" Style="{StaticResource Panel}" Padding="8" Margin="0">
+            <TextBlock x:Name="StatusText" Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis"
+                       Text="Bereit. Simulator oder DSO-1102 verbinden."/>
         </Border>
     </Grid>
 </Window>

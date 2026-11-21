@@ -490,146 +490,6 @@ internal static class Program
         return 0;
     }
 
-    private static int CaptureGroundBaseline(string dllPath)
-    {
-        using var library = VendorLibrary.Load(dllPath);
-
-        var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
-        var captureStart = library.GetDelegate<DsoCaptureStartDelegate>("dsoCaptureStart");
-        var triggerEnabled = library.GetDelegate<DsoTriggerEnabledDelegate>("dsoTriggerEnabled");
-        var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
-        var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
-        var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
-
-        var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
-        if (deviceIndex < 0)
-            return Fail("No DSO-1102 device was found at indices 0..3.");
-
-        captureStart(deviceIndex);
-        Thread.Sleep(3);
-        triggerEnabled(deviceIndex);
-        Thread.Sleep(3);
-        force(deviceIndex);
-        Thread.Sleep(3);
-
-        var stateCode = (ushort)0;
-        var triggerValue = 0u;
-
-        for (var i = 0; i < 100; i++)
-        {
-            stateCode = getCaptureState(deviceIndex, out triggerValue);
-            if (stateCode == 3)
-                break;
-
-            if (stateCode == 127)
-                return Fail("Capture timed out before a readable state was reached.");
-
-            Thread.Sleep(3);
-        }
-
-        if (stateCode != 3)
-            return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
-
-        const int analysisSampleCount = 30_000;
-        const int guardBufferSamples = 1_048_576;
-
-        // The vendor DLL uses two six-word configuration blocks while decoding data.
-        // These conservative values match the already initialized CH1 / 1 ms/div /
-        // small-memory test setup closely enough for a first GND-baseline read.
-        // No configuration setter is called here.
-        var captureConfig = new ushort[]
-        {
-            1,  // trigger source: CH1 family value
-            0,  // selected channel: CH1
-            6,  // 1 ms/div family time-base index
-            50, // nominal 50% trigger position
-            0,  // small RAM
-            0
-        };
-
-        var channelConfig = new ushort[6];
-        var bufferA = new ushort[guardBufferSamples];
-        var bufferB = new ushort[guardBufferSamples];
-
-        var handles = new[]
-        {
-            GCHandle.Alloc(bufferA, GCHandleType.Pinned),
-            GCHandle.Alloc(bufferB, GCHandleType.Pinned),
-            GCHandle.Alloc(captureConfig, GCHandleType.Pinned),
-            GCHandle.Alloc(channelConfig, GCHandleType.Pinned)
-        };
-
-        ushort readResult;
-
-        try
-        {
-            readResult = getChannelData(
-                checked((ushort)deviceIndex),
-                handles[0].AddrOfPinnedObject(),
-                handles[1].AddrOfPinnedObject(),
-                handles[2].AddrOfPinnedObject(),
-                handles[3].AddrOfPinnedObject(),
-                triggerValue,
-                0,
-                0);
-        }
-        finally
-        {
-            foreach (var handle in handles)
-                if (handle.IsAllocated)
-                    handle.Free();
-        }
-
-        var a = bufferA.Take(analysisSampleCount).ToArray();
-        var b = bufferB.Take(analysisSampleCount).ToArray();
-        var allZeroA = a.All(x => x == 0);
-        var allZeroB = b.All(x => x == 0);
-        var waveformReadValid = readResult != 0 && !(allZeroA && allZeroB);
-
-        WriteJson(new
-        {
-            ok = true,
-            command = "capture-gnd",
-            deviceIndex,
-            capture = new
-            {
-                stateCode,
-                stateName = CaptureStateName(stateCode),
-                triggerValue,
-                vendorReadResult = readResult,
-                analysisSampleCountPerBuffer = analysisSampleCount,
-                sampleCountVerified = false,
-                configurationSource = "Original software initialized device; bridge performs no Set* call."
-            },
-            bufferA = SummarizeSamples(a),
-            bufferB = SummarizeSamples(b),
-            interpretation = new
-            {
-                waveformReadValid,
-                allZeroA,
-                allZeroB,
-                channelMapping = waveformReadValid
-                    ? "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically."
-                    : "Not evaluated because both output buffers remained unchanged/all-zero.",
-                voltageCalibrationApplied = false,
-                diagnostic = waveformReadValid
-                    ? "Vendor DLL populated at least one output buffer."
-                    : "Capture reached ready state, but dsoGetChannelData did not populate either output buffer. ABI/auxiliary parameters remain unverified."
-            },
-            safety = new
-            {
-                persistentConfigurationChanged = false,
-                calibrationWritten = false,
-                flashWritten = false,
-                deviceIdWritten = false,
-                configurationSettersCalled = false,
-                waveformRead = waveformReadValid
-            }
-        });
-
-        return 0;
-    }
-
     private static int CaptureGroundBaselineV2(
         string dllPath,
         string commandName,
@@ -944,10 +804,15 @@ internal static class Program
         // current test setup is non-zero. Scanning the whole guard allocation
         // therefore gives a conservative estimate of how far the vendor call
         // actually populated each output buffer.
-        var writeExtentA = SummarizeBufferWriteExtent(bufferA, verifiedSampleCount);
-        var writeExtentB = SummarizeBufferWriteExtent(bufferB, verifiedSampleCount);
-        var fullBufferA = SummarizeFullBuffer(bufferA);
-        var fullBufferB = SummarizeFullBuffer(bufferB);
+        // Live frame commands only need the payload. The full-buffer diagnostics scan
+        // and group all 1,048,576 guard samples per channel and dominated the frame
+        // latency in Run mode, so they are reserved for the diagnostic commands.
+        // This is host-side computation only; the vendor call sequence is unchanged.
+        var leanFrame = emitAdcPayload;
+        object? writeExtentA = leanFrame ? null : SummarizeBufferWriteExtent(bufferA, verifiedSampleCount);
+        object? writeExtentB = leanFrame ? null : SummarizeBufferWriteExtent(bufferB, verifiedSampleCount);
+        object? fullBufferA = leanFrame ? null : SummarizeFullBuffer(bufferA);
+        object? fullBufferB = leanFrame ? null : SummarizeFullBuffer(bufferB);
         var allZeroA = a.All(x => x == 0);
         var allZeroB = b.All(x => x == 0);
 
@@ -1067,8 +932,9 @@ internal static class Program
                 fullBufferB,
                 adcPayload
             },
-            bufferA = SummarizeSamples(a),
-            bufferB = SummarizeSamples(b),
+            bufferA = leanFrame ? null : SummarizeSamples(a),
+            bufferB = leanFrame ? null : SummarizeSamples(b),
+            diagnosticsOmitted = leanFrame,
             interpretation = new
             {
                 waveformReadValid,
