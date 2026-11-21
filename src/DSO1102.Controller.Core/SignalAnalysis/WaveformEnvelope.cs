@@ -12,7 +12,7 @@ public static class WaveformEnvelope
     public static IReadOnlyList<WaveformPoint> Create(IReadOnlyList<double> samples, int start, int count, int buckets)
     {
         ArgumentNullException.ThrowIfNull(samples);
-        if (buckets < 1) throw new ArgumentOutOfRangeException(nameof(buckets));
+        ArgumentOutOfRangeException.ThrowIfLessThan(buckets, 1);
         if (start < 0 || count < 0 || start > samples.Count - count)
             throw new ArgumentOutOfRangeException(nameof(count), "Range is outside the sample list.");
 

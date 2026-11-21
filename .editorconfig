@@ -1,0 +1,16 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+
+[*.{cs,xaml,csproj,props}]
+indent_size = 4
+
+[*.cs]
+# Executable names (DSO1102_Bridge_x86 etc.) intentionally use underscores.
+dotnet_diagnostic.CA1707.severity = none
+# TriggerMode.Single is the oscilloscope term, not a type name.
+dotnet_diagnostic.CA1720.severity = none

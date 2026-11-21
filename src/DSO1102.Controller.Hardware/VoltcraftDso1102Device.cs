@@ -115,26 +115,11 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// V/div values whose vendor range codes were captured in runtime traces of the
-    /// original application (docs/REVERSE_ENGINEERING.md, "Voltage/div and coupling runtime mapping").
-    /// </summary>
-    public static IReadOnlyList<double> SupportedVoltsPerDivision { get; } = [0.5, 1.0, 2.0];
+    /// <summary>V/div values whose vendor range codes were captured in runtime traces.</summary>
+    public static IReadOnlyList<double> SupportedVoltsPerDivision => AnalogFrontEnd.SupportedVoltsPerDivision;
 
     internal static string BuildAnalogCommand(DsoSettings settings)
     {
-        static int RangeCode(double voltsPerDivision) => voltsPerDivision switch
-        {
-            0.5 => 5,
-            1.0 => 6,
-            2.0 => 7,
-            _ => throw new NotSupportedException(
-                $"{voltsPerDivision} V/div is not runtime-verified. Supported: 500 mV/div, 1 V/div, 2 V/div.")
-        };
-
-        // Ground uses the non-AC relay state; the samples are replaced in software.
-        static int CouplingCode(ChannelCoupling coupling) => coupling == ChannelCoupling.AC ? 1 : 0;
-
         foreach (var factor in new[] { settings.Channel1ProbeFactor, settings.Channel2ProbeFactor })
         {
             if (!double.IsFinite(factor) || factor <= 0)
@@ -142,8 +127,8 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
         }
 
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"frame-1ms-analog {RangeCode(settings.Channel1VoltsPerDivision)} {RangeCode(settings.Channel2VoltsPerDivision)} " +
-            $"{CouplingCode(settings.Channel1Coupling)} {CouplingCode(settings.Channel2Coupling)}");
+            $"frame-1ms-analog {AnalogFrontEnd.RangeCode(settings.Channel1VoltsPerDivision)} {AnalogFrontEnd.RangeCode(settings.Channel2VoltsPerDivision)} " +
+            $"{AnalogFrontEnd.CouplingCode(settings.Channel1Coupling)} {AnalogFrontEnd.CouplingCode(settings.Channel2Coupling)}");
     }
 
     public async ValueTask<AcquisitionFrame> AcquireAsync(

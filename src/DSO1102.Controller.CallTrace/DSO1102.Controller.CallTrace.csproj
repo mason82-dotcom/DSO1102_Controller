@@ -7,5 +7,7 @@
     <AssemblyName>DSO1102_CallTrace_x86</AssemblyName>
     <RootNamespace>DSO1102.Controller.CallTrace</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Diagnostic tool: CreateProcessW/GetFinalPathNameByHandleW keep StringBuilder marshalling. -->
+    <NoWarn>$(NoWarn);CA1838</NoWarn>
   </PropertyGroup>
 </Project>

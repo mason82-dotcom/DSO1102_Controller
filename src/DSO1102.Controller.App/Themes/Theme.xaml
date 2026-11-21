@@ -13,11 +13,14 @@
     <Color x:Key="OverlayColor">#1C2028</Color>
     <Color x:Key="ScopeColor">#07090C</Color>
     <Color x:Key="BorderSubtleColor">#242832</Color>
-    <Color x:Key="BorderStrongColor">#363C48</Color>
+    <!-- Control boundaries: >= 3:1 against canvas, surface and overlay (WCAG 1.4.11). -->
+    <Color x:Key="BorderStrongColor">#646C7B</Color>
     <Color x:Key="TextPrimaryColor">#E6E9EF</Color>
     <Color x:Key="TextSecondaryColor">#A3ABB8</Color>
     <Color x:Key="TextMutedColor">#7D8594</Color>
     <Color x:Key="AccentColor">#4C8DFF</Color>
+    <!-- Fill behind white text: 5.2:1 (WCAG 1.4.3). The lighter accent is for focus/marks only. -->
+    <Color x:Key="AccentFillColor">#2563EB</Color>
     <Color x:Key="AccentHoverColor">#669DFF</Color>
     <Color x:Key="AccentPressedColor">#3B76E0</Color>
     <Color x:Key="SuccessColor">#3FB950</Color>
@@ -36,6 +39,7 @@
     <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
     <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMutedColor}"/>
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
+    <SolidColorBrush x:Key="AccentFillBrush" Color="{StaticResource AccentFillColor}"/>
     <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}"/>
     <SolidColorBrush x:Key="AccentPressedBrush" Color="{StaticResource AccentPressedColor}"/>
     <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
@@ -202,8 +206,8 @@
     <Style TargetType="Button" BasedOn="{StaticResource ButtonBase}"/>
     <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource ButtonBase}"/>
     <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource ButtonBase}">
-        <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
-        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+        <Setter Property="Background" Value="{StaticResource AccentFillBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource AccentFillBrush}"/>
         <Setter Property="Foreground" Value="#FFFFFF"/>
     </Style>
     <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource ButtonBase}">

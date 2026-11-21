@@ -1,4 +1,4 @@
-name: Windows builds
+name: Build and test
 
 on:
   push:
@@ -7,6 +7,25 @@ on:
     branches: [ main ]
 
 jobs:
+  tests-linux:
+    # Fast feedback: DSP/scope/bridge-protocol tests and a compile of all Windows projects.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Regression tests (no hardware required)
+        run: dotnet run --project tests/DSO1102.Controller.Tests -c Release
+
+      - name: Compile Windows projects (EnableWindowsTargeting)
+        run: |
+          dotnet build src/DSO1102.Controller.App -c Release -p:EnableWindowsTargeting=true
+          dotnet build src/DSO1102.Controller.Bridge -c Release -p:EnableWindowsTargeting=true
+          dotnet build src/DSO1102.Controller.CallTrace -c Release -p:EnableWindowsTargeting=true
+
   build:
     runs-on: windows-latest
 
