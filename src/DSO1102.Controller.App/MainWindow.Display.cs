@@ -63,7 +63,7 @@ public partial class MainWindow
 
     // ---------------------------------------------------------------- measurement bar
 
-    private static TextBlock[] BuildReadouts(UniformGrid host)
+    private static TextBlock[] BuildReadouts(UniformGrid host, string channel)
     {
         host.Children.Clear();
         var names = DisplayFormat.ReadoutNames;
@@ -78,6 +78,7 @@ public partial class MainWindow
                 Style = (Style)host.FindResource("ReadoutValue"),
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
+            System.Windows.Automation.AutomationProperties.SetName(values[i], $"{channel} {names[i]}");
             cell.Children.Add(values[i]);
             host.Children.Add(cell);
         }

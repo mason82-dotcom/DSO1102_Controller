@@ -57,8 +57,8 @@ public partial class MainWindow
         _profile = ScopeSettingsStore.Load(_settingsPath);
         _settings = _profile.For(_domain);
 
-        _ch1Readouts = BuildReadouts(Ch1Readouts);
-        _ch2Readouts = BuildReadouts(Ch2Readouts);
+        _ch1Readouts = BuildReadouts(Ch1Readouts, "CH1");
+        _ch2Readouts = BuildReadouts(Ch2Readouts, "CH2");
 
         foreach (var window in Enum.GetValues<WindowFunction>())
             FftWindowCombo.Items.Add(new ComboBoxItem { Content = DisplayFormat.Window(window), Tag = window });
@@ -252,15 +252,36 @@ public partial class MainWindow
     {
         var idle = _runCancellation is null && !_closing;
         var connected = _device?.IsConnected == true;
-        ConnectSimulatorButton.IsEnabled = idle;
-        ConnectHardwareButton.IsEnabled = idle;
+        // Either the connect actions or "Trennen" are shown, never both: keeps the app bar
+        // within the minimum window width and makes the next step obvious.
+        var hasDevice = _device is not null;
+        ConnectSimulatorButton.Visibility = ConnectHardwareButton.Visibility = hasDevice ? Visibility.Collapsed : Visibility.Visible;
+        DisconnectButton.Visibility = hasDevice ? Visibility.Visible : Visibility.Collapsed;
+        ConnectSimulatorButton.IsEnabled = ConnectHardwareButton.IsEnabled = idle;
         RunButton.IsEnabled = SingleButton.IsEnabled = idle && connected;
         StopButton.IsEnabled = !idle && !_closing;
-        DisconnectButton.IsEnabled = !_closing && _device is not null;
+        DisconnectButton.IsEnabled = !_closing && hasDevice;
         var hasView = _view is not null;
         ExportWindowCsvButton.IsEnabled = ExportRecordCsvButton.IsEnabled = ExportPngButton.IsEnabled = hasView && !_closing;
         ClearCursorsButton.IsEnabled = _cursorA is not null || _cursorB is not null;
         UpdateStateIndicators();
+        Dispatcher.BeginInvoke(RestoreKeyboardFocus, System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    /// <summary>
+    /// Buttons are hidden or disabled as the state changes; if that removed the keyboard
+    /// focus, move it to the next useful action instead of leaving it nowhere.
+    /// </summary>
+    private void RestoreKeyboardFocus()
+    {
+        if (!IsActive || Keyboard.FocusedElement is UIElement { IsVisible: true, IsEnabled: true })
+            return;
+
+        foreach (var candidate in new UIElement[] { RunButton, StopButton, DisconnectButton, ConnectHardwareButton, ConnectSimulatorButton })
+        {
+            if (candidate is { IsVisible: true, IsEnabled: true } && candidate.Focus())
+                return;
+        }
     }
 
     private void UpdateStateIndicators()
