@@ -51,5 +51,6 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine($"PASS: {TestKit.Passed} regression checks in {suites.Count} suites; no hardware calls.");
+var skipped = args.Contains("--analysis-only") ? " Bridge process suite explicitly skipped (--analysis-only)." : string.Empty;
+Console.WriteLine($"PASS: {TestKit.Passed} regression checks in {suites.Count} suites; no hardware calls.{skipped}");
 return 0;

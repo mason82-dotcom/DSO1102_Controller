@@ -17,6 +17,7 @@ internal static class PresentationTests
         try
         {
             Formatting();
+            ViewTexts();
             Cursors();
             AnalogTable();
         }
@@ -52,6 +53,40 @@ internal static class PresentationTests
             "ADC frames labelled uncalibrated");
     }
 
+    private static void ViewTexts()
+    {
+        Check(DisplayFormat.Source(TriggerSource.Channel2) == "CH2" && DisplayFormat.Source(TriggerSource.External) == "EXT", "trigger source names");
+        Check(DisplayFormat.Slope(TriggerSlope.Falling) == "fallend" && DisplayFormat.Window(WindowFunction.Rectangular) == "Rechteck", "slope and window names");
+
+        const double rate = 5_000_000;
+        var square = Enumerable.Range(0, 200_000).Select(i => (i / 2500) % 2 == 0 ? 180.0 : 70.0).ToArray();
+        var frame = new AcquisitionFrame(new DateTimeOffset(2026, 11, 21, 10, 30, 5, 123, TimeSpan.Zero), rate, square, square)
+        {
+            SampleDomain = SampleDomain.AdcCounts, IsAmplitudeCalibrated = false, ReplacedSamplesChannel1 = 2
+        };
+        var triggered = ScopeProcessor.Process(frame, new ScopeViewSettings { TriggerLevel = 125, TimePerDivisionSeconds = 1e-3 });
+        Check(DisplayFormat.TriggerState(triggered) == "Trig CH1 steigend", "trigger badge when triggered");
+        var free = ScopeProcessor.Process(frame, new ScopeViewSettings { TriggerLevel = 250 });
+        Check(DisplayFormat.TriggerState(free) == "Auto (keine Flanke)" && DisplayFormat.TriggerStateLong(free).StartsWith("Auto", StringComparison.Ordinal), "trigger badge in free run");
+        var waiting = ScopeProcessor.Process(frame, new ScopeViewSettings { TriggerLevel = 250, TriggerMode = SoftwareTriggerMode.Normal });
+        Check(DisplayFormat.TriggerState(waiting) == "Keine Flanke", "trigger badge while waiting");
+
+        Check(DisplayFormat.TimeAxis(triggered).StartsWith("1 ms/div", StringComparison.Ordinal) && DisplayFormat.TimeAxis(triggered).Contains("Fenster -5 ms … 5 ms", StringComparison.Ordinal),
+            "time axis around trigger");
+        var status = DisplayFormat.FrameStatus(triggered);
+        Check(status.Contains("200.000 Samples @ 5 MS/s", StringComparison.Ordinal) && status.Contains("getriggert", StringComparison.Ordinal)
+              && status.Contains("Ersatzwerte CH1/CH2: 2/0", StringComparison.Ordinal) && status.Contains("unkalibrierte ADC-Werte", StringComparison.Ordinal),
+            "frame status line");
+        var spectrum = DisplayFormat.SpectrumSummary(triggered);
+        var peakHz = triggered.SpectrumPeak!.FrequencyHz;
+        var resolution = triggered.Spectrum[1].FrequencyHz;
+        Check(Math.Abs(peakHz - 1000) <= resolution
+              && spectrum.StartsWith($"Spitze  {TimeBaseSteps.FormatFrequency(peakHz)}", StringComparison.Ordinal)
+              && spectrum.EndsWith($"Auflös. {TimeBaseSteps.FormatFrequency(resolution)}", StringComparison.Ordinal),
+            "spectrum summary: peak within one bin of 1 kHz, resolution shown");
+        Check(DisplayFormat.SpectrumSummary(triggered with { SpectrumPeak = null }) == DisplayFormat.Missing, "spectrum summary without peak");
+    }
+
     private static void Cursors()
     {
         const double rate = 1_000_000;
@@ -79,6 +114,9 @@ internal static class PresentationTests
         Reject(() => AnalogFrontEnd.RangeCode(0.2), "untraced V/div rejected");
         Check(Enumerable.Range(0, 10).Where(AnalogFrontEnd.IsTracedRangeCode).SequenceEqual([5, 6, 7]), "traced range code set");
         Check(AnalogFrontEnd.CouplingCode(ChannelCoupling.AC) == 1 && AnalogFrontEnd.CouplingCode(ChannelCoupling.Ground) == 0, "GND uses DC relay state");
-        Check(AnalogFrontEnd.RangeLabel(5) == "500 mV/div" && AnalogFrontEnd.CouplingLabel(1) == "AC", "labels");
+        Check(AnalogFrontEnd.RangeLabel(5) == "500 mV/div" && AnalogFrontEnd.RangeLabel(3) == "code 3" && AnalogFrontEnd.CouplingLabel(1) == "AC", "labels");
+        Check(AnalogFrontEnd.TryParseFrameArguments("7 5 1 0", out var codes, out _) && codes == (7, 5, 1, 0), "frame arguments parsed");
+        foreach (var bad in new[] { "8 6 0 0", "6 6 2 0", "6 6 0", "6 6 0 0 0", "6  6 0 0", "+6 6 0 0", "6 6 0 0\nprobe" })
+            Check(!AnalogFrontEnd.TryParseFrameArguments(bad, out _, out var error) && error is not null, $"frame arguments rejected: {bad.Replace("\n", "\\n", StringComparison.Ordinal)}");
     }
 }

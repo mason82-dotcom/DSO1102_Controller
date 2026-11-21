@@ -152,8 +152,13 @@ public partial class MainWindow
 
         // Cursor times are relative to the trigger point and stay meaningful across
         // most changes; a different time base would put them off-screen.
+        // ReprocessAsync redraws once with the new view, so only the state is reset here.
         if (Math.Abs(previous.TimePerDivisionSeconds - _settings.TimePerDivisionSeconds) > 1e-15)
-            ClearCursors();
+        {
+            _cursorA = _cursorB = null;
+            CursorText.Text = CursorReadout.Hint;
+            UpdateButtons();
+        }
 
         _ = ReprocessAsync();
     }

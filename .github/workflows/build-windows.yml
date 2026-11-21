@@ -27,7 +27,6 @@ jobs:
           dotnet build src/DSO1102.Controller.CallTrace -c Release -p:EnableWindowsTargeting=true
 
   build:
-    needs: tests-linux
     runs-on: windows-latest
 
     steps:

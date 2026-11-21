@@ -1,7 +1,4 @@
-using System.Diagnostics;
-using System.Text.Json;
 using DSO1102.Controller.Core.Models;
-using DSO1102.Controller.Core.Presentation;
 using DSO1102.Controller.Core.Scope;
 using DSO1102.Controller.Core.SignalAnalysis;
 using DSO1102.Controller.Hardware;

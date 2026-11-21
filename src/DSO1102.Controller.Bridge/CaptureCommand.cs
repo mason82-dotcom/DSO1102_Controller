@@ -17,35 +17,11 @@ internal static partial class Program
         // GND is a software display mode in the vendor application and uses DC here.
         public static bool TryParse(string arguments, out AnalogRequest? request, out string? error)
         {
-            request = null;
-            var parts = arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length != 4 || !parts.All(p => ushort.TryParse(p, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _)))
-            {
-                error = "Expected four numeric arguments: ch1Range ch2Range ch1Coupling ch2Coupling.";
-                return false;
-            }
-
-            var values = parts.Select(p => ushort.Parse(p, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
-            if (!AnalogFrontEnd.IsTracedRangeCode(values[0]) || !AnalogFrontEnd.IsTracedRangeCode(values[1]))
-            {
-                error = "Only runtime-traced range codes 5 (500 mV/div), 6 (1 V/div) and 7 (2 V/div) are allowed.";
-                return false;
-            }
-
-            if (!AnalogFrontEnd.IsTracedCouplingCode(values[2]) || !AnalogFrontEnd.IsTracedCouplingCode(values[3]))
-            {
-                error = "Only coupling codes 0 (DC) and 1 (AC) are allowed.";
-                return false;
-            }
-
-            request = new(values[0], values[1], values[2], values[3]);
-            error = null;
-            return true;
+            request = AnalogFrontEnd.TryParseFrameArguments(arguments, out var c, out error)
+                ? new(c.Range1, c.Range2, c.Coupling1, c.Coupling2)
+                : null;
+            return request is not null;
         }
-
-        public static string RangeLabel(ushort code) => AnalogFrontEnd.RangeLabel(code);
-
-        public static string CouplingLabel(ushort code) => AnalogFrontEnd.CouplingLabel(code);
     }
 
     private const string AnalogFramePrefix = "frame-1ms-analog ";
@@ -201,12 +177,12 @@ internal static partial class Program
                 transientOnly = true,
                 channel1RangeCode = range1,
                 channel2RangeCode = range2,
-                channel1RangeLabel = AnalogRequest.RangeLabel(range1),
-                channel2RangeLabel = AnalogRequest.RangeLabel(range2),
+                channel1RangeLabel = AnalogFrontEnd.RangeLabel(range1),
+                channel2RangeLabel = AnalogFrontEnd.RangeLabel(range2),
                 channel1CouplingCode = coupling1,
                 channel2CouplingCode = coupling2,
-                channel1CouplingLabel = AnalogRequest.CouplingLabel(coupling1),
-                channel2CouplingLabel = AnalogRequest.CouplingLabel(coupling2),
+                channel1CouplingLabel = AnalogFrontEnd.CouplingLabel(coupling1),
+                channel2CouplingLabel = AnalogFrontEnd.CouplingLabel(coupling2),
                 channel1Filter = 0,
                 channel2Filter = 0,
                 triggerHfRejection = 0,
