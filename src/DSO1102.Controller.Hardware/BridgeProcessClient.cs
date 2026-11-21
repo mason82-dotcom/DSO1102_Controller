@@ -11,6 +11,10 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly StringBuilder _stderr = new();
     private Process? _process;
+
+    // Mirrors the bridge's own validation: traced range codes 5..7, coupling 0/1 only.
+    private static readonly System.Text.RegularExpressions.Regex AnalogFrameCommand =
+        new(@"\Aframe-1ms-analog [5-7] [5-7] [01] [01]\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     private bool _disposed;
     private readonly TimeSpan _commandTimeout;
 
@@ -28,7 +32,7 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
 
     public async Task<JsonDocument> RunAsync(string command, CancellationToken cancellationToken)
     {
-        if (command is not ("probe" or "frame-1ms-adc"))
+        if (command is not ("probe" or "frame-1ms-adc") && !AnalogFrameCommand.IsMatch(command))
             throw new ArgumentException("Command is not part of the controller protocol.", nameof(command));
         await _gate.WaitAsync(cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

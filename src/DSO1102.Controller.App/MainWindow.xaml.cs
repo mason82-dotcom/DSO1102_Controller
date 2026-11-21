@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -20,7 +21,7 @@ public partial class MainWindow : Window
 {
     // The instrument always runs the runtime-verified 1 ms/div profile; the record is
     // ~524k samples at ~5 MS/s. The time base in the UI selects a window of that record.
-    private static readonly DsoSettings AcquisitionSettings = new()
+    private static readonly DsoSettings BaseAcquisitionSettings = new()
     {
         SampleRate = 5_000_000,
         RecordLength = 524_288,
@@ -30,13 +31,25 @@ public partial class MainWindow : Window
     private static readonly double[] AdcScales = [4, 8, 16, 32, 64];
     private static readonly double[] VoltScales = [0.05, 0.1, 0.2, 0.5, 1, 2, 5];
 
-    private static readonly Color Ch1Color = Color.FromRgb(255, 216, 77);
-    private static readonly Color Ch2Color = Color.FromRgb(85, 215, 255);
-    private static readonly Color TriggerColor = Color.FromRgb(255, 140, 90);
-    private static readonly Color CursorColor = Color.FromRgb(200, 160, 255);
-    private static readonly Brush GridBrush = Freeze(new SolidColorBrush(Color.FromRgb(34, 39, 47)));
-    private static readonly Brush AxisBrush = Freeze(new SolidColorBrush(Color.FromRgb(60, 67, 80)));
-    private static readonly Brush LabelBrush = Freeze(new SolidColorBrush(Color.FromRgb(174, 181, 192)));
+    // Data colours come from Themes/Theme.xaml; the fallbacks keep the drawing code usable
+    // when the window is hosted without the application resources (designer, tests).
+    private static readonly Color Ch1Color = ThemeColor("Ch1Color", Color.FromRgb(0xFF, 0xD8, 0x4D));
+    private static readonly Color Ch2Color = ThemeColor("Ch2Color", Color.FromRgb(0x4F, 0xD1, 0xFF));
+    private static readonly Color TriggerColor = Color.FromRgb(0xFF, 0x9F, 0x43);
+    private static readonly Color CursorColor = Color.FromRgb(0xB7, 0x94, 0xF6);
+    private static readonly Brush GridBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x1A, 0x1E, 0x26)));
+    private static readonly Brush AxisBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x2C, 0x32, 0x3D)));
+    private static readonly Brush LabelBrush = Freeze(new SolidColorBrush(ThemeColor("TextSecondaryColor", Color.FromRgb(0xA3, 0xAB, 0xB8))));
+    private static readonly FontFamily MonoFamily = new("Cascadia Mono, Consolas");
+    private static readonly Brush LabelBackdrop = Freeze(new SolidColorBrush(Color.FromArgb(0xCC, 0x07, 0x09, 0x0C)));
+
+    private static readonly string[] ReadoutNames =
+        ["Frequenz", "Periode", "Tastgrad", "Spitze-Spitze", "Minimum", "Maximum", "Mittelwert", "RMS", "AC-RMS"];
+
+    private TextBlock[] _ch1Readouts = [];
+    private TextBlock[] _ch2Readouts = [];
+    private DsoSettings _acquisition = BaseAcquisitionSettings;
+    private bool _connectionLost;
 
     private readonly string _settingsPath = ScopeSettingsStore.DefaultPath;
     private ScopeSettingsProfile _profile;
@@ -62,6 +75,9 @@ public partial class MainWindow : Window
 
         _profile = ScopeSettingsStore.Load(_settingsPath);
         _settings = _profile.For(_domain);
+
+        _ch1Readouts = BuildReadouts(Ch1Readouts);
+        _ch2Readouts = BuildReadouts(Ch2Readouts);
 
         foreach (var window in Enum.GetValues<WindowFunction>())
             FftWindowCombo.Items.Add(new ComboBoxItem { Content = WindowName(window), Tag = window });
@@ -89,7 +105,9 @@ public partial class MainWindow : Window
         DeviceHeaderText.Text = "Verbindung wird aufgebaut …";
         StatusText.Text = "Verbindung wird aufgebaut …";
         await device.ConnectAsync(token);
-        await device.ApplySettingsAsync(AcquisitionSettings, token);
+        _connectionLost = false;
+        _acquisition = ReadAcquisitionSettings();
+        await device.ApplySettingsAsync(_acquisition, token);
         UpdateDeviceHeader();
         UpdateButtons();
         await AcquireOnceAsync(waitForTrigger: false, token);
@@ -194,10 +212,12 @@ public partial class MainWindow : Window
             {
                 _framesWithoutTrigger = 0;
                 ShowView(view);
+                UpdateStateIndicators();
                 return;
             }
 
             _framesWithoutTrigger++;
+            UpdateStateIndicators();
             StatusText.Text = $"Warte auf Trigger ({SourceName(settings.TriggerSource)} {SlopeName(settings.TriggerSlope)} bei {FormatValue(settings.TriggerLevel)}) — {_framesWithoutTrigger} Aufnahme(n) ohne Flanke.";
             if (!waitForTrigger)
                 return;
@@ -230,6 +250,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = $"Verbindung unterbrochen: {ex.Message} — Gerät prüfen und erneut verbinden.";
+            _connectionLost = true;
             DeviceHeaderText.Text = "Nicht verbunden";
             try { await DisposeDeviceAsync(); }
             catch (Exception cleanup) { StatusText.Text += $" (Bereinigung: {cleanup.Message})"; }
@@ -262,6 +283,24 @@ public partial class MainWindow : Window
         var hasView = _view is not null;
         ExportWindowCsvButton.IsEnabled = ExportRecordCsvButton.IsEnabled = ExportPngButton.IsEnabled = hasView && !_closing;
         ClearCursorsButton.IsEnabled = _cursorA is not null || _cursorB is not null;
+        UpdateStateIndicators();
+    }
+
+    private void UpdateStateIndicators()
+    {
+        var running = _runCancellation is not null;
+        var connected = _device?.IsConnected == true;
+        var (dotKey, text, textKey) =
+            _connectionLost ? ("DangerBrush", "Verbindung unterbrochen", "DangerBrush")
+            : running && _framesWithoutTrigger > 0 ? ("WarningBrush", "Wartet auf Trigger", "WarningBrush")
+            : running && connected ? ("AccentBrush", "Erfassung läuft", "AccentHoverBrush")
+            : running ? ("AccentBrush", "Verbindet …", "TextSecondaryBrush")
+            : connected ? ("SuccessBrush", "Angehalten", "TextSecondaryBrush")
+            : ("TextMutedBrush", "Nicht verbunden", "TextMutedBrush");
+
+        StatusDot.Fill = (Brush)FindResource(dotKey);
+        RunStateText.Text = text;
+        RunStateText.Foreground = (Brush)FindResource(textKey);
     }
 
     // ---------------------------------------------------------------- settings
@@ -289,7 +328,7 @@ public partial class MainWindow : Window
                     combo.Items.Add(new ComboBoxItem { Content = $"{FormatValue(scale, domain)}/div", Tag = scale });
             }
 
-            var (min, max, small) = domain == SampleDomain.Volts ? (-10.0, 10.0, 0.05) : (0.0, 255.0, 1.0);
+            var (min, max, small) = domain == SampleDomain.Volts ? (-20.0, 20.0, 0.05) : (0.0, 255.0, 1.0);
             foreach (var slider in new[] { Ch1CenterSlider, Ch2CenterSlider, TriggerLevelSlider })
             {
                 slider.Minimum = min;
@@ -312,9 +351,9 @@ public partial class MainWindow : Window
             var s = _settings;
             RefreshTimeBaseItems();
             TriggerPositionSlider.Value = s.TriggerPositionPercent;
-            TriggerModeCombo.SelectedIndex = s.TriggerMode == SoftwareTriggerMode.Normal ? 1 : 0;
-            TriggerSourceCombo.SelectedIndex = s.TriggerSource == TriggerSource.Channel2 ? 1 : 0;
-            TriggerSlopeCombo.SelectedIndex = s.TriggerSlope == TriggerSlope.Falling ? 1 : 0;
+            (s.TriggerMode == SoftwareTriggerMode.Normal ? TriggerNormalRadio : TriggerAutoRadio).IsChecked = true;
+            (s.TriggerSource == TriggerSource.Channel2 ? TriggerCh2Radio : TriggerCh1Radio).IsChecked = true;
+            (s.TriggerSlope == TriggerSlope.Falling ? SlopeFallingRadio : SlopeRisingRadio).IsChecked = true;
             TriggerLevelSlider.Value = s.TriggerLevel;
             Ch1VisibleCheck.IsChecked = s.Channel1.Visible;
             Ch2VisibleCheck.IsChecked = s.Channel2.Visible;
@@ -376,9 +415,9 @@ public partial class MainWindow : Window
         {
             TimePerDivisionSeconds = TagOr(TimeBaseCombo, _settings.TimePerDivisionSeconds),
             TriggerPositionPercent = TriggerPositionSlider.Value,
-            TriggerMode = TriggerModeCombo.SelectedIndex == 1 ? SoftwareTriggerMode.Normal : SoftwareTriggerMode.Auto,
-            TriggerSource = TriggerSourceCombo.SelectedIndex == 1 ? TriggerSource.Channel2 : TriggerSource.Channel1,
-            TriggerSlope = TriggerSlopeCombo.SelectedIndex == 1 ? TriggerSlope.Falling : TriggerSlope.Rising,
+            TriggerMode = TriggerNormalRadio.IsChecked == true ? SoftwareTriggerMode.Normal : SoftwareTriggerMode.Auto,
+            TriggerSource = TriggerCh2Radio.IsChecked == true ? TriggerSource.Channel2 : TriggerSource.Channel1,
+            TriggerSlope = SlopeFallingRadio.IsChecked == true ? TriggerSlope.Falling : TriggerSlope.Rising,
             TriggerLevel = TriggerLevelSlider.Value,
             TriggerHysteresisFraction = _settings.TriggerHysteresisFraction,
             Channel1 = new ChannelView
@@ -421,6 +460,53 @@ public partial class MainWindow : Window
         Ch1CenterLabel.Content = $"CH1 _Mittellinie: {FormatValue(_settings.Channel1.CenterValue)}";
         Ch2CenterLabel.Content = $"CH2 M_ittellinie: {FormatValue(_settings.Channel2.CenterValue)}";
         SpectrumRow.Height = _settings.ShowSpectrum ? new GridLength(200) : new GridLength(0);
+    }
+
+    private DsoSettings ReadAcquisitionSettings()
+    {
+        static double Range(RadioButton half, RadioButton two) => half.IsChecked == true ? 0.5 : two.IsChecked == true ? 2.0 : 1.0;
+        static ChannelCoupling Coupling(RadioButton ac, RadioButton gnd) =>
+            gnd.IsChecked == true ? ChannelCoupling.Ground : ac.IsChecked == true ? ChannelCoupling.AC : ChannelCoupling.DC;
+
+        return BaseAcquisitionSettings with
+        {
+            ExperimentalAnalogControl = AnalogControlCheck.IsChecked == true,
+            Channel1VoltsPerDivision = Range(Ch1Range05, Ch1Range2),
+            Channel2VoltsPerDivision = Range(Ch2Range05, Ch2Range2),
+            Channel1Coupling = Coupling(Ch1CouplingAc, Ch1CouplingGnd),
+            Channel2Coupling = Coupling(Ch2CouplingAc, Ch2CouplingGnd),
+            Channel1ProbeFactor = Ch1Probe10.IsChecked == true ? 10 : 1,
+            Channel2ProbeFactor = Ch2Probe10.IsChecked == true ? 10 : 1
+        };
+    }
+
+    /// <summary>
+    /// Front-end changes take effect with the next capture: the device runs the guarded
+    /// analog sequence once and then returns to the plain frame command.
+    /// </summary>
+    private async void AnalogSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents || !IsInitialized) return;
+        var settings = ReadAcquisitionSettings();
+        _acquisition = settings;
+
+        var device = _device;
+        if (device?.IsConnected != true)
+            return;
+
+        try
+        {
+            await device.ApplySettingsAsync(settings);
+            StatusText.Text = settings.ExperimentalAnalogControl
+                ? "Analog-Frontend wird mit der nächsten Aufnahme gesetzt (experimentell, nominelle Volt)."
+                : "Analog-Frontend nicht mehr gesteuert: das Gerät behält die zuletzt gesetzten Werte, Anzeige in ADC-Werten.";
+            if (_runCancellation is null)
+                await StartSingleAsync();
+        }
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or InvalidOperationException)
+        {
+            StatusText.Text = $"Analog-Einstellung nicht übernommen: {ex.Message}";
+        }
     }
 
     private void TriggerLevelToMid_Click(object sender, RoutedEventArgs e)
@@ -506,8 +592,8 @@ public partial class MainWindow : Window
         }
 
         var frame = view.Frame;
-        Ch1MeasurementsText.Text = FormatMeasurements(view.Channel1);
-        Ch2MeasurementsText.Text = FormatMeasurements(view.Channel2);
+        ShowReadouts(_ch1Readouts, view.Channel1);
+        ShowReadouts(_ch2Readouts, view.Channel2);
         FftText.Text = view.SpectrumPeak is { } peak
             ? $"Spitze  {TimeBaseSteps.FormatFrequency(peak.FrequencyHz)}\nAmpl.   {FormatValue(peak.Amplitude)}\nAuflös. {TimeBaseSteps.FormatFrequency(SpectrumResolution(view))}"
             : "—";
@@ -518,7 +604,8 @@ public partial class MainWindow : Window
             TriggerState.AutoFreeRun => "Auto ohne Flanke (Recordmitte)",
             _ => "keine Flanke"
         };
-        var calibration = frame.IsAmplitudeCalibrated ? "Volt" : "unkalibrierte ADC-Werte";
+        var calibration = frame.IsNominalScale ? "nominelle Volt (unkalibriert)"
+            : frame.IsAmplitudeCalibrated ? "Volt" : "unkalibrierte ADC-Werte";
         var replaced = frame.ReplacedSamplesChannel1 + frame.ReplacedSamplesChannel2 > 0
             ? $" — Ersatzwerte CH1/CH2: {frame.ReplacedSamplesChannel1}/{frame.ReplacedSamplesChannel2}"
             : string.Empty;
@@ -536,7 +623,9 @@ public partial class MainWindow : Window
         _view = null;
         _reprocessVersion++;
         ClearCursors();
-        Ch1MeasurementsText.Text = Ch2MeasurementsText.Text = FftText.Text = "—";
+        ShowReadouts(_ch1Readouts, null);
+        ShowReadouts(_ch2Readouts, null);
+        FftText.Text = "—";
         DrawAll();
         UpdateButtons();
     }
@@ -606,7 +695,7 @@ public partial class MainWindow : Window
         };
         AddLabel(canvas, state, width - 160, 6, triggerBrush);
         if (!view.Frame.IsAmplitudeCalibrated)
-            AddLabel(canvas, $"Einheit: {unit} (unkalibriert)", width - 200, height - 22, LabelBrush);
+            AddLabel(canvas, view.Frame.IsNominalScale ? "V nominell (unkalibriert)" : $"Einheit: {unit} (unkalibriert)", width - 210, height - 22, LabelBrush);
     }
 
     private static void DrawTrace(Canvas canvas, ScopeView view, IReadOnlyList<double> samples, ChannelView channel, Color color, double width, double height)
@@ -653,7 +742,12 @@ public partial class MainWindow : Window
 
     private static void AddLabel(Canvas canvas, string text, double x, double y, Brush brush)
     {
-        var label = new TextBlock { Text = text, Foreground = brush, FontFamily = new FontFamily("Consolas"), FontSize = 12 };
+        // Semi-opaque scope background keeps labels readable where traces pass underneath.
+        var label = new TextBlock
+        {
+            Text = text, Foreground = brush, FontFamily = MonoFamily, FontSize = 12,
+            Background = LabelBackdrop, Padding = new Thickness(4, 1, 4, 1)
+        };
         Canvas.SetLeft(label, x);
         Canvas.SetTop(label, y);
         canvas.Children.Add(label);
@@ -942,21 +1036,43 @@ public partial class MainWindow : Window
 
     // ---------------------------------------------------------------- formatting
 
-    private string FormatMeasurements(SignalMeasurements m)
+    private static TextBlock[] BuildReadouts(UniformGrid host)
     {
-        string V(double value) => FormatValue(value).PadLeft(12);
-        var duty = double.IsFinite(m.DutyCycle) ? $"{m.DutyCycle * 100,10:F1} %" : "—".PadLeft(12);
-        return
-            $"Frequenz {TimeBaseSteps.FormatFrequency(m.FrequencyHz),12}\n" +
-            $"Periode  {(m.PeriodSeconds > 0 ? TimeBaseSteps.FormatTime(m.PeriodSeconds) : "—"),12}\n" +
-            $"Tastgrad {duty}\n" +
-            $"Spitze-S {V(m.PeakToPeak)}\n" +
-            $"Minimum  {V(m.Minimum)}\n" +
-            $"Maximum  {V(m.Maximum)}\n" +
-            $"Mittel   {V(m.Mean)}\n" +
-            $"RMS      {V(m.Rms)}\n" +
-            $"AC-RMS   {V(m.AcRms)}";
+        host.Children.Clear();
+        var values = new TextBlock[ReadoutNames.Length];
+        for (var i = 0; i < ReadoutNames.Length; i++)
+        {
+            var cell = new StackPanel { Margin = new Thickness(0, 0, 12, 0) };
+            cell.Children.Add(new TextBlock { Text = ReadoutNames[i], Style = (Style)host.FindResource("ReadoutLabel") });
+            values[i] = new TextBlock { Text = "—", Style = (Style)host.FindResource("ReadoutValue"), TextTrimming = TextTrimming.CharacterEllipsis };
+            cell.Children.Add(values[i]);
+            host.Children.Add(cell);
+        }
+        return values;
     }
+
+    private void ShowReadouts(TextBlock[] cells, SignalMeasurements? m)
+    {
+        if (cells.Length != ReadoutNames.Length) return;
+        if (m is null)
+        {
+            foreach (var cell in cells) cell.Text = "—";
+            return;
+        }
+
+        cells[0].Text = TimeBaseSteps.FormatFrequency(m.FrequencyHz);
+        cells[1].Text = m.PeriodSeconds > 0 ? TimeBaseSteps.FormatTime(m.PeriodSeconds) : "—";
+        cells[2].Text = double.IsFinite(m.DutyCycle) ? $"{m.DutyCycle * 100:F1} %" : "—";
+        cells[3].Text = FormatValue(m.PeakToPeak);
+        cells[4].Text = FormatValue(m.Minimum);
+        cells[5].Text = FormatValue(m.Maximum);
+        cells[6].Text = FormatValue(m.Mean);
+        cells[7].Text = FormatValue(m.Rms);
+        cells[8].Text = FormatValue(m.AcRms);
+    }
+
+    private static Color ThemeColor(string key, Color fallback) =>
+        Application.Current?.TryFindResource(key) is Color color ? color : fallback;
 
     private string FormatValue(double value) => FormatValue(value, _domain);
 

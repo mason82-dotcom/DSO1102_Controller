@@ -12,6 +12,7 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
     private readonly string? _vendorDll;
     private BridgeProcessClient? _bridge;
     private DsoSettings _settings = new();
+    private string? _appliedAnalogCommand;
 
     public VoltcraftDso1102Device(string? bridgeExe = null, string? dllPath = null)
     {
@@ -76,6 +77,7 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
 
             _bridge = bridge;
             DeviceInfo = DeviceInfo with { Firmware = firmware };
+            _appliedAnalogCommand = null; // device state unknown after (re)connect
             IsConnected = true;
         }
         catch
@@ -107,8 +109,41 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
             throw new InvalidOperationException("DSO-1102 is not connected.");
 
         ValidateSupportedProfile(settings);
+        if (settings.ExperimentalAnalogControl)
+            _ = BuildAnalogCommand(settings); // validates V/div, coupling and probe factor
         _settings = settings;
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// V/div values whose vendor range codes were captured in runtime traces of the
+    /// original application (docs/REVERSE_ENGINEERING.md, "Voltage/div and coupling runtime mapping").
+    /// </summary>
+    public static IReadOnlyList<double> SupportedVoltsPerDivision { get; } = [0.5, 1.0, 2.0];
+
+    internal static string BuildAnalogCommand(DsoSettings settings)
+    {
+        static int RangeCode(double voltsPerDivision) => voltsPerDivision switch
+        {
+            0.5 => 5,
+            1.0 => 6,
+            2.0 => 7,
+            _ => throw new NotSupportedException(
+                $"{voltsPerDivision} V/div is not runtime-verified. Supported: 500 mV/div, 1 V/div, 2 V/div.")
+        };
+
+        // Ground uses the non-AC relay state; the samples are replaced in software.
+        static int CouplingCode(ChannelCoupling coupling) => coupling == ChannelCoupling.AC ? 1 : 0;
+
+        foreach (var factor in new[] { settings.Channel1ProbeFactor, settings.Channel2ProbeFactor })
+        {
+            if (!double.IsFinite(factor) || factor <= 0)
+                throw new ArgumentOutOfRangeException(nameof(settings), "Probe factor must be positive.");
+        }
+
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"frame-1ms-analog {RangeCode(settings.Channel1VoltsPerDivision)} {RangeCode(settings.Channel2VoltsPerDivision)} " +
+            $"{CouplingCode(settings.Channel1Coupling)} {CouplingCode(settings.Channel2Coupling)}");
     }
 
     public async ValueTask<AcquisitionFrame> AcquireAsync(
@@ -119,10 +154,24 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
         if (!IsConnected || _bridge is null)
             throw new InvalidOperationException("DSO-1102 is not connected.");
 
-        ValidateSupportedProfile(_settings);
+        var settings = _settings;
+        ValidateSupportedProfile(settings);
 
-        using var document = await _bridge.RunAsync("frame-1ms-adc", cancellationToken)
+        // The analog sequence runs only when the requested front-end state differs from
+        // the one this session last applied; afterwards the plain frame command is used.
+        string? analogCommand = null;
+        if (settings.ExperimentalAnalogControl)
+        {
+            var requested = BuildAnalogCommand(settings);
+            if (!string.Equals(requested, _appliedAnalogCommand, StringComparison.Ordinal))
+                analogCommand = requested;
+        }
+
+        using var document = await _bridge.RunAsync(analogCommand ?? "frame-1ms-adc", cancellationToken)
             .ConfigureAwait(false);
+
+        if (analogCommand is not null)
+            _appliedAnalogCommand = analogCommand;
 
         var root = document.RootElement;
         var sourceRate = ReadDecodedOutputRate(root);
@@ -147,6 +196,22 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
             payload.GetProperty("channel2").GetString(),
             declaredCount);
 
+        if (settings.ExperimentalAnalogControl && _appliedAnalogCommand is not null)
+        {
+            return new AcquisitionFrame(
+                DateTimeOffset.Now,
+                sourceRate,
+                ToNominalVolts(channel1.Samples, settings.Channel1VoltsPerDivision, settings.Channel1ProbeFactor, settings.Channel1Coupling),
+                ToNominalVolts(channel2.Samples, settings.Channel2VoltsPerDivision, settings.Channel2ProbeFactor, settings.Channel2Coupling))
+            {
+                SampleDomain = SampleDomain.Volts,
+                IsAmplitudeCalibrated = false,
+                IsNominalScale = true,
+                ReplacedSamplesChannel1 = channel1.ReplacedCount,
+                ReplacedSamplesChannel2 = channel2.ReplacedCount
+            };
+        }
+
         return new AcquisitionFrame(
             DateTimeOffset.Now,
             sourceRate,
@@ -164,6 +229,17 @@ public sealed class VoltcraftDso1102Device : IDsoDevice
     {
         if (_bridge is not null || IsConnected)
             await DisconnectAsync().ConfigureAwait(false);
+    }
+
+    internal static double[] ToNominalVolts(double[] codes, double voltsPerDivision, double probeFactor, ChannelCoupling coupling)
+    {
+        var result = new double[codes.Length];
+        if (coupling == ChannelCoupling.Ground)
+            return result; // software GND: flat reference line at 0 V, as in the vendor UI
+
+        for (var i = 0; i < codes.Length; i++)
+            result[i] = NominalAdcScale.ToVolts(codes[i], voltsPerDivision, probeFactor);
+        return result;
     }
 
     private static void ValidateSupportedProfile(DsoSettings settings)

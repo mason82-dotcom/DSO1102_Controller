@@ -125,7 +125,71 @@ internal static class Program
         }
     }
 
-    private static int ExecuteCommand(string command, string dllPath) =>
+    /// <summary>Transient analog front-end state for the guarded 1 ms/div analog frame.</summary>
+    private sealed record AnalogRequest(ushort Channel1Range, ushort Channel2Range, ushort Channel1Coupling, ushort Channel2Coupling)
+    {
+        public static readonly AnalogRequest Default1VoltDc = new(6, 6, 0, 0);
+
+        // Only codes observed in the vendor runtime traces are accepted:
+        // range 5 = 500 mV/div, 6 = 1 V/div, 7 = 2 V/div; coupling 0 = DC, 1 = AC.
+        // GND is a software display mode in the vendor application and uses DC here.
+        public static bool TryParse(string arguments, out AnalogRequest? request, out string? error)
+        {
+            request = null;
+            var parts = arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 4 || !parts.All(p => ushort.TryParse(p, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _)))
+            {
+                error = "Expected four numeric arguments: ch1Range ch2Range ch1Coupling ch2Coupling.";
+                return false;
+            }
+
+            var values = parts.Select(p => ushort.Parse(p, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            if (values[0] is < 5 or > 7 || values[1] is < 5 or > 7)
+            {
+                error = "Only runtime-traced range codes 5 (500 mV/div), 6 (1 V/div) and 7 (2 V/div) are allowed.";
+                return false;
+            }
+
+            if (values[2] > 1 || values[3] > 1)
+            {
+                error = "Only coupling codes 0 (DC) and 1 (AC) are allowed.";
+                return false;
+            }
+
+            request = new(values[0], values[1], values[2], values[3]);
+            error = null;
+            return true;
+        }
+
+        public static string RangeLabel(ushort code) => code switch
+        {
+            5 => "500 mV/div",
+            6 => "1 V/div",
+            7 => "2 V/div",
+            _ => $"code {code}"
+        };
+
+        public static string CouplingLabel(ushort code) => code == 1 ? "AC" : "DC";
+    }
+
+    private const string AnalogFramePrefix = "frame-1ms-analog ";
+
+    private static int ExecuteCommand(string command, string dllPath)
+    {
+        if (command.StartsWith(AnalogFramePrefix, StringComparison.Ordinal))
+        {
+            if (!AnalogRequest.TryParse(command[AnalogFramePrefix.Length..], out var analog, out var error))
+                return Fail(error!);
+
+            return CaptureGroundBaselineV2(dllPath, command, groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div",
+                decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true,
+                selfInitializeAnalog: true, analog: analog);
+        }
+
+        return ExecuteNamedCommand(command, dllPath);
+    }
+
+    private static int ExecuteNamedCommand(string command, string dllPath) =>
         command switch
         {
             "sdk-info" => InspectSdk(dllPath),
@@ -148,7 +212,7 @@ internal static class Program
             "frame-1ms-adc" => CaptureGroundBaselineV2(dllPath, "frame-1ms-adc", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true),
             "self-init-1ms-analog" => CaptureGroundBaselineV2(dllPath, "self-init-1ms-analog", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, selfInitializeAnalog: true),
             "exports" => CheckExports(dllPath),
-            _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, self-init-1ms-analog, exports.")
+            _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, frame-1ms-analog <ch1Range 5..7> <ch2Range 5..7> <ch1Coupling 0|1> <ch2Coupling 0|1>, self-init-1ms-analog, exports.")
         };
 
     private static int RunServer(string dllPath)
@@ -499,8 +563,10 @@ internal static class Program
         double? decodedOutputReferenceRateHz = null,
         bool selfInitializeTimeBase = false,
         bool emitAdcPayload = false,
-        bool selfInitializeAnalog = false)
+        bool selfInitializeAnalog = false,
+        AnalogRequest? analog = null)
     {
+        analog ??= AnalogRequest.Default1VoltDc;
         using var library = VendorLibrary.Load(dllPath);
 
         var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
@@ -575,8 +641,10 @@ internal static class Program
                 return Fail("Analog self-initialization requested, but one or more verified vendor exports could not be resolved.");
             }
 
-            const ushort range1V = 6;
-            const ushort couplingDc = 0;
+            var range1 = analog.Channel1Range;
+            var range2 = analog.Channel2Range;
+            var coupling1 = analog.Channel1Coupling;
+            var coupling2 = analog.Channel2Coupling;
             const ushort triggerSourceCh1 = 0;
             const ushort centeredPosition = 128;
 
@@ -609,20 +677,20 @@ internal static class Program
             {
                 initLevelRangeResult = initLevelRange(deviceIndex);
                 filterVoltageResult = setFiltAndVoltageData(
-                    deviceIndex, 0, 0, range1V, range1V);
+                    deviceIndex, 0, 0, range1, range2);
                 filterResult = setFilt(deviceIndex, 0, 0, 0);
                 voltageCouplingResult = setVoltageAndCoupling(
                     deviceIndex,
-                    range1V,
-                    range1V,
-                    couplingDc,
-                    couplingDc,
+                    range1,
+                    range2,
+                    coupling1,
+                    coupling2,
                     triggerSourceCh1);
                 offsetResult = setOffset(
                     deviceIndex,
                     positionHandle.AddrOfPinnedObject(),
-                    range1V,
-                    range1V,
+                    range1,
+                    range2,
                     triggerSourceCh1,
                     calibrationHandle.AddrOfPinnedObject());
             }
@@ -635,12 +703,14 @@ internal static class Program
             analogInitialization = new
             {
                 transientOnly = true,
-                channel1RangeCode = range1V,
-                channel2RangeCode = range1V,
-                rangeLabel = "1 V/div",
-                channel1CouplingCode = couplingDc,
-                channel2CouplingCode = couplingDc,
-                couplingLabel = "DC",
+                channel1RangeCode = range1,
+                channel2RangeCode = range2,
+                channel1RangeLabel = AnalogRequest.RangeLabel(range1),
+                channel2RangeLabel = AnalogRequest.RangeLabel(range2),
+                channel1CouplingCode = coupling1,
+                channel2CouplingCode = coupling2,
+                channel1CouplingLabel = AnalogRequest.CouplingLabel(coupling1),
+                channel2CouplingLabel = AnalogRequest.CouplingLabel(coupling2),
                 channel1Filter = 0,
                 channel2Filter = 0,
                 triggerHfRejection = 0,

@@ -32,6 +32,16 @@ The project uses the original vendor DLL through an x86 bridge for the previousl
   and of the scope area as PNG
 - View settings are stored per sample domain in `%APPDATA%\DSO1102_Controller\settings.json`
 - Simulator backend (1 kHz CAL-like square on CH1, 2.5 kHz sine on CH2, random phase, noise)
+- Dark instrument UI (`src/DSO1102.Controller.App/Themes/Theme.xaml`): design tokens (L0 canvas /
+  L1 surfaces / one blue accent, 1 px borders, no drop shadows), Segoe UI with three weights and
+  12/14/16 px sizes, custom templates for buttons, 44 px icon buttons with tooltip + shortcut,
+  segmented controls, switches, combo boxes, sliders and a slim scrollbar; measurement bar
+  under the scope; status indicators for connection and acquisition state
+- **Experimental analog front-end (opt-in, off by default):** V/div 500 mV / 1 V / 2 V, DC/AC
+  coupling, software GND, probe 1×/10×. Uses the guarded transient analog sequence
+  (`frame-1ms-analog <r1> <r2> <c1> <c2>`, only the runtime-traced range codes 5..7 and coupling
+  0/1 are accepted by bridge and client) once per change, then the plain frame command. Values are
+  shown as **nominal volts** (32 codes/div around code 128), never as calibrated volts.
 - Regression tests without hardware (`tests/DSO1102.Controller.Tests`)
 
 Amplitudes from the real device are **uncalibrated ADC codes**. V/div, coupling and offset are

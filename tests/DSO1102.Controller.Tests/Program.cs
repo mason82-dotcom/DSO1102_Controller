@@ -11,11 +11,12 @@ if (args.FirstOrDefault() == "server")
     var mode = File.ReadAllText(args[2]);
     while (Console.ReadLine() is { } command && command != "quit")
     {
+        File.AppendAllText(args[2] + ".log", command + "\n");
         if (mode == "hang") { await Task.Delay(Timeout.Infinite); }
         if (mode == "exit") return;
         if (mode == "invalid") { Console.WriteLine("not-json"); continue; }
         if (mode == "array") { Console.WriteLine("[]"); continue; }
-        if (mode == "frame" && command == "frame-1ms-adc")
+        if (mode == "frame" && (command == "frame-1ms-adc" || command.StartsWith("frame-1ms-analog ")))
         {
             var bytes = new byte[10240 * 2];
             for (var i = 0; i < bytes.Length; i += 2) bytes[i] = 128;
@@ -222,6 +223,21 @@ Reject(() => VendorSdkIdentity.RequireKnownBinary(typeof(AcquisitionFrame).Assem
     }
     finally { File.Delete(partialFile); }
 
+    Near(NominalAdcScale.ToVolts(160, 1.0, 1), 1.0, 1e-12, "nominal 32 codes per division");
+    await using (var analogSim = new SimulatedDsoDevice(seed: 3))
+    {
+        await analogSim.ConnectAsync();
+        await analogSim.ApplySettingsAsync(new DsoSettings
+        {
+            SampleRate = rate, RecordLength = 100_000, ExperimentalAnalogControl = true,
+            Channel1Coupling = ChannelCoupling.AC, Channel2Coupling = ChannelCoupling.Ground, Channel1ProbeFactor = 10
+        });
+        var simFrame = await analogSim.AcquireAsync();
+        Near(simFrame.Channel1.Average(), 0, 1e-9, "simulator AC removes DC");
+        Check(simFrame.Channel1.Max() - simFrame.Channel1.Min() > 15, "simulator probe factor scales amplitude");
+        Check(simFrame.Channel2.All(v => v == 0), "simulator GND flat");
+    }
+
     await using var simulator = new SimulatedDsoDevice(seed: 7);
     await simulator.ConnectAsync();
     await simulator.ApplySettingsAsync(new DsoSettings { SampleRate = rate, RecordLength = 262_144 });
@@ -254,6 +270,48 @@ try
         Check(frame.SampleDomain == SampleDomain.AdcCounts && !frame.IsAmplitudeCalibrated, "hardware domain remains explicit");
         await RejectAsync<NotSupportedException>(() => device.ApplySettingsAsync(new DsoSettings { TimePerDivisionSeconds = double.NaN }), "NaN timebase rejected");
         await RejectAsync<NotSupportedException>(() => device.ApplySettingsAsync(new DsoSettings { TriggerMode = TriggerMode.Normal }), "unsupported trigger rejected");
+    }
+    await SetMode("frame");
+    File.Delete(scenario + ".log");
+    await using (var device = new VoltcraftDso1102Device(Environment.ProcessPath!, scenario))
+    {
+        await device.ConnectAsync();
+        var analog = new DsoSettings
+        {
+            RecordLength = 32,
+            ExperimentalAnalogControl = true,
+            Channel1VoltsPerDivision = 2.0,
+            Channel2VoltsPerDivision = 0.5,
+            Channel1Coupling = ChannelCoupling.AC,
+            Channel2Coupling = ChannelCoupling.Ground,
+            Channel1ProbeFactor = 10
+        };
+        await device.ApplySettingsAsync(analog);
+        var first = await device.AcquireAsync();
+        var second = await device.AcquireAsync();
+        await device.ApplySettingsAsync(analog with { Channel1VoltsPerDivision = 1.0 });
+        var third = await device.AcquireAsync();
+        await device.ApplySettingsAsync(analog with { ExperimentalAnalogControl = false });
+        var plain = await device.AcquireAsync();
+        var log = File.ReadAllLines(scenario + ".log").Where(l => l.StartsWith("frame")).ToArray();
+        Check(log.SequenceEqual(new[] { "frame-1ms-analog 7 5 1 0", "frame-1ms-adc", "frame-1ms-analog 6 5 1 0", "frame-1ms-adc" }),
+            "analog sequence only when front-end changes: " + string.Join(" | ", log));
+        Check(first.SampleDomain == SampleDomain.Volts && first.IsNominalScale && !first.IsAmplitudeCalibrated, "analog frame is nominal volts");
+        Near(first.Channel1[0], 0, 0, "code 128 is 0 V");
+        Near(first.Channel1[9500], (255 - 128) / 32.0 * 2.0 * 10, 1e-12, "nominal scale with V/div and probe factor");
+        Check(first.Channel2.All(v => v == 0), "software GND is a flat 0 V line");
+        Near(third.Channel1[9500], (255 - 128) / 32.0 * 1.0 * 10, 1e-12, "changed V/div applied");
+        Check(second.IsNominalScale && plain.SampleDomain == SampleDomain.AdcCounts && plain.Channel1[9500] == 255, "analog off returns ADC codes");
+        await RejectAsync<NotSupportedException>(() => device.ApplySettingsAsync(analog with { Channel1VoltsPerDivision = 5.0 }), "untraced V/div rejected");
+        await RejectAsync<ArgumentOutOfRangeException>(() => device.ApplySettingsAsync(analog with { Channel2ProbeFactor = 0 }), "invalid probe factor rejected");
+    }
+    File.Delete(scenario + ".log");
+    await SetMode("valid");
+    await using (var bridge = new BridgeProcessClient(Environment.ProcessPath!, scenario))
+    {
+        await RejectAsync<ArgumentException>(() => bridge.RunAsync("frame-1ms-analog 8 6 0 0", default), "untraced range code blocked in client");
+        await RejectAsync<ArgumentException>(() => bridge.RunAsync("frame-1ms-analog 6 6 2 0", default), "GND/unknown coupling code blocked in client");
+        await RejectAsync<ArgumentException>(() => bridge.RunAsync("frame-1ms-analog 6 6 0 0\nprobe", default), "analog command injection blocked");
     }
     await SetMode("slow");
     await using (var bridge = new BridgeProcessClient(Environment.ProcessPath!, scenario))

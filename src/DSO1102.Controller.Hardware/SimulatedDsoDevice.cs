@@ -92,10 +92,31 @@ public sealed class SimulatedDsoDevice : IDsoDevice
             return (a, b);
         }, cancellationToken).ConfigureAwait(false);
 
+        if (settings.ExperimentalAnalogControl)
+        {
+            ApplyFrontEnd(ch1, settings.Channel1Coupling, settings.Channel1ProbeFactor);
+            ApplyFrontEnd(ch2, settings.Channel2Coupling, settings.Channel2ProbeFactor);
+        }
+
         // Pace like a real acquisition instead of spinning the UI.
         await Task.Delay(30, cancellationToken).ConfigureAwait(false);
 
         return new AcquisitionFrame(DateTimeOffset.Now, settings.SampleRate, ch1, ch2);
+    }
+
+    /// <summary>Mirrors the hardware path: AC removes the mean, GND is a flat 0 V line.</summary>
+    private static void ApplyFrontEnd(double[] samples, ChannelCoupling coupling, double probeFactor)
+    {
+        if (coupling == ChannelCoupling.Ground)
+        {
+            Array.Clear(samples);
+            return;
+        }
+
+        var mean = coupling == ChannelCoupling.AC ? samples.Average() : 0;
+        var factor = double.IsFinite(probeFactor) && probeFactor > 0 ? probeFactor : 1;
+        for (var i = 0; i < samples.Length; i++)
+            samples[i] = (samples[i] - mean) * factor;
     }
 
     public async ValueTask DisposeAsync()
