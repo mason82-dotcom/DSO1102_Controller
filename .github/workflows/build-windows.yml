@@ -17,6 +17,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Regression tests (no hardware required)
+        run: dotnet run --project .\tests\DSO1102.Controller.Tests -c Release
+
       - name: Restore x64 app
         run: dotnet restore .\src\DSO1102.Controller.App\DSO1102.Controller.App.csproj
 

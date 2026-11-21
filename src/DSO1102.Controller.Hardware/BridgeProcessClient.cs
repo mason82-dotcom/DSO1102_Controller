@@ -12,8 +12,17 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
     private readonly StringBuilder _stderr = new();
     private Process? _process;
 
-    public BridgeProcessClient(string? bridgeExe = null, string? vendorDll = null)
+    // Mirrors the bridge's own validation: traced range codes 5..7, coupling 0/1 only.
+    private static readonly System.Text.RegularExpressions.Regex AnalogFrameCommand =
+        new(@"\Aframe-1ms-analog [5-7] [5-7] [01] [01]\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private bool _disposed;
+    private readonly TimeSpan _commandTimeout;
+
+    public BridgeProcessClient(string? bridgeExe = null, string? vendorDll = null, TimeSpan? commandTimeout = null)
     {
+        _commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(15);
+        if (_commandTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(commandTimeout));
         _bridgeExe = ResolveBridgeExe(bridgeExe);
         _vendorDll = ResolveVendorDll(vendorDll);
     }
@@ -23,21 +32,28 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
 
     public async Task<JsonDocument> RunAsync(string command, CancellationToken cancellationToken)
     {
+        if (command is not ("probe" or "frame-1ms-adc") && !AnalogFrameCommand.IsMatch(command))
+            throw new ArgumentException("Command is not part of the controller protocol.", nameof(command));
         await _gate.WaitAsync(cancellationToken);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_commandTimeout);
+        var token = timeout.Token;
 
         try
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            token.ThrowIfCancellationRequested();
             EnsureServerStarted();
 
             var process = _process
                 ?? throw new InvalidOperationException("DSO1102 bridge server was not started.");
 
-            using var registration = cancellationToken.Register(TerminateServer);
+            using var registration = token.Register(() => KillProcess(process));
 
-            await process.StandardInput.WriteLineAsync(command);
-            await process.StandardInput.FlushAsync(cancellationToken);
+            await process.StandardInput.WriteLineAsync(command.AsMemory(), token);
+            await process.StandardInput.FlushAsync(token);
 
-            var response = await process.StandardOutput.ReadLineAsync(cancellationToken);
+            var response = await process.StandardOutput.ReadLineAsync(token);
 
             if (string.IsNullOrWhiteSpace(response))
             {
@@ -58,12 +74,19 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
                     ex);
             }
 
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                document.Dispose();
+                throw new InvalidOperationException("Bridge response must be a JSON object.");
+            }
+
             var ok = document.RootElement.TryGetProperty("ok", out var okElement) &&
                      okElement.ValueKind == JsonValueKind.True;
 
             if (!ok)
             {
-                var error = document.RootElement.TryGetProperty("error", out var errorElement)
+                var error = document.RootElement.TryGetProperty("error", out var errorElement) &&
+                    errorElement.ValueKind == JsonValueKind.String
                     ? errorElement.GetString()
                     : null;
 
@@ -72,7 +95,30 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
                     $"DSO1102 bridge command '{command}' failed. Error={error ?? "(none)"}. STDERR: {ReadStderr()}");
             }
 
+            if (!document.RootElement.TryGetProperty("command", out var echoed) ||
+                echoed.ValueKind != JsonValueKind.String || echoed.GetString() != command)
+            {
+                document.Dispose();
+                throw new InvalidOperationException("Bridge response command mismatch.");
+            }
+            if (token.IsCancellationRequested)
+            {
+                document.Dispose();
+                token.ThrowIfCancellationRequested();
+            }
             return document;
+        }
+        catch (Exception ex) when (timeout.IsCancellationRequested)
+        {
+            TerminateServer();
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException("Bridge command cancelled.", ex, cancellationToken);
+            throw new TimeoutException($"Bridge command exceeded {_commandTimeout.TotalSeconds:g} seconds.", ex);
+        }
+        catch
+        {
+            TerminateServer();
+            throw;
         }
         finally
         {
@@ -86,6 +132,9 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
 
         try
         {
+            if (_disposed)
+                return;
+            _disposed = true;
             var process = _process;
             _process = null;
 
@@ -96,10 +145,9 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
             {
                 if (!process.HasExited)
                 {
-                    await process.StandardInput.WriteLineAsync("quit");
-                    await process.StandardInput.FlushAsync();
-
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    await process.StandardInput.WriteLineAsync("quit".AsMemory(), timeout.Token);
+                    await process.StandardInput.FlushAsync(timeout.Token);
                     await process.WaitForExitAsync(timeout.Token);
                 }
             }
@@ -122,7 +170,7 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
         finally
         {
             _gate.Release();
-            _gate.Dispose();
+            // Keep the gate usable so repeated/concurrent disposal is idempotent.
         }
     }
 
@@ -189,18 +237,21 @@ internal sealed class BridgeProcessClient : IAsyncDisposable
         if (process is null)
             return;
 
+        KillProcess(process);
+        process.Dispose();
+    }
+
+    private static void KillProcess(Process process)
+    {
+        // Cancellation may interrupt pipe I/O. The caller owns disposal after
+        // that I/O unwinds; disposing here races StreamReader/StreamWriter.
         try
         {
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
         }
-        catch
-        {
-        }
-        finally
-        {
-            process.Dispose();
-        }
+        catch (InvalidOperationException) { }
+        catch (System.ComponentModel.Win32Exception) { }
     }
 
     private string ReadStderr()

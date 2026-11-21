@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using DSO1102.Controller.Core.Models;
 
 namespace DSO1102.Controller.Bridge;
 
@@ -124,9 +125,74 @@ internal static class Program
         }
     }
 
-    private static int ExecuteCommand(string command, string dllPath) =>
+    /// <summary>Transient analog front-end state for the guarded 1 ms/div analog frame.</summary>
+    private sealed record AnalogRequest(ushort Channel1Range, ushort Channel2Range, ushort Channel1Coupling, ushort Channel2Coupling)
+    {
+        public static readonly AnalogRequest Default1VoltDc = new(6, 6, 0, 0);
+
+        // Only codes observed in the vendor runtime traces are accepted:
+        // range 5 = 500 mV/div, 6 = 1 V/div, 7 = 2 V/div; coupling 0 = DC, 1 = AC.
+        // GND is a software display mode in the vendor application and uses DC here.
+        public static bool TryParse(string arguments, out AnalogRequest? request, out string? error)
+        {
+            request = null;
+            var parts = arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 4 || !parts.All(p => ushort.TryParse(p, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _)))
+            {
+                error = "Expected four numeric arguments: ch1Range ch2Range ch1Coupling ch2Coupling.";
+                return false;
+            }
+
+            var values = parts.Select(p => ushort.Parse(p, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            if (values[0] is < 5 or > 7 || values[1] is < 5 or > 7)
+            {
+                error = "Only runtime-traced range codes 5 (500 mV/div), 6 (1 V/div) and 7 (2 V/div) are allowed.";
+                return false;
+            }
+
+            if (values[2] > 1 || values[3] > 1)
+            {
+                error = "Only coupling codes 0 (DC) and 1 (AC) are allowed.";
+                return false;
+            }
+
+            request = new(values[0], values[1], values[2], values[3]);
+            error = null;
+            return true;
+        }
+
+        public static string RangeLabel(ushort code) => code switch
+        {
+            5 => "500 mV/div",
+            6 => "1 V/div",
+            7 => "2 V/div",
+            _ => $"code {code}"
+        };
+
+        public static string CouplingLabel(ushort code) => code == 1 ? "AC" : "DC";
+    }
+
+    private const string AnalogFramePrefix = "frame-1ms-analog ";
+
+    private static int ExecuteCommand(string command, string dllPath)
+    {
+        if (command.StartsWith(AnalogFramePrefix, StringComparison.Ordinal))
+        {
+            if (!AnalogRequest.TryParse(command[AnalogFramePrefix.Length..], out var analog, out var error))
+                return Fail(error!);
+
+            return CaptureGroundBaselineV2(dllPath, command, groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div",
+                decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true,
+                selfInitializeAnalog: true, analog: analog);
+        }
+
+        return ExecuteNamedCommand(command, dllPath);
+    }
+
+    private static int ExecuteNamedCommand(string command, string dllPath) =>
         command switch
         {
+            "sdk-info" => InspectSdk(dllPath),
             "probe" => Probe(dllPath),
             "info" => ReadDeviceInfo(dllPath),
             "arm" => ArmAndObserve(dllPath, forceTrigger: false),
@@ -146,7 +212,7 @@ internal static class Program
             "frame-1ms-adc" => CaptureGroundBaselineV2(dllPath, "frame-1ms-adc", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, emitAdcPayload: true),
             "self-init-1ms-analog" => CaptureGroundBaselineV2(dllPath, "self-init-1ms-analog", groundReference: false, timeBaseCode: 16, timeBaseLabel: "1 ms/div", decodedOutputReferenceRateHz: 5_000_000, selfInitializeTimeBase: true, selfInitializeAnalog: true),
             "exports" => CheckExports(dllPath),
-            _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, self-init-1ms-analog, exports.")
+            _ => Fail($"Unknown command '{command}'. Supported: probe, info, arm, force, capture-raw, capture-gnd-v2, capture-400us, capture-1ms, capture-2ms, capture-4ms, self-init-400us, self-init-1ms, self-init-2ms, self-init-4ms, frame-400us-adc, frame-1ms-adc, frame-1ms-analog <ch1Range 5..7> <ch2Range 5..7> <ch1Coupling 0|1> <ch2Coupling 0|1>, self-init-1ms-analog, exports.")
         };
 
     private static int RunServer(string dllPath)
@@ -195,6 +261,13 @@ internal static class Program
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
             "DSO-1102 USB",
             "DSO1102USB.dll");
+    }
+
+    private static int InspectSdk(string dllPath)
+    {
+        var identity = VendorSdkIdentity.Inspect(dllPath);
+        WriteJson(new { ok = true, command = "sdk-info", dllPath, identity, hardwareCallsMade = false });
+        return 0;
     }
 
     private static int Probe(string dllPath)
@@ -481,146 +554,6 @@ internal static class Program
         return 0;
     }
 
-    private static int CaptureGroundBaseline(string dllPath)
-    {
-        using var library = VendorLibrary.Load(dllPath);
-
-        var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
-        var captureStart = library.GetDelegate<DsoCaptureStartDelegate>("dsoCaptureStart");
-        var triggerEnabled = library.GetDelegate<DsoTriggerEnabledDelegate>("dsoTriggerEnabled");
-        var force = library.GetDelegate<DsoForceTriggerDelegate>("dsoForceTrigger");
-        var getCaptureState = library.GetDelegate<DsoGetCaptureStateDelegate>("dsoGetCaptureState");
-        var getChannelData = library.GetDelegate<DsoGetChannelDataDelegate>("dsoGetChannelData");
-
-        var deviceIndex = Enumerable.Range(0, 4).FirstOrDefault(index => search(index) != 0, -1);
-        if (deviceIndex < 0)
-            return Fail("No DSO-1102 device was found at indices 0..3.");
-
-        captureStart(deviceIndex);
-        Thread.Sleep(3);
-        triggerEnabled(deviceIndex);
-        Thread.Sleep(3);
-        force(deviceIndex);
-        Thread.Sleep(3);
-
-        var stateCode = (ushort)0;
-        var triggerValue = 0u;
-
-        for (var i = 0; i < 100; i++)
-        {
-            stateCode = getCaptureState(deviceIndex, out triggerValue);
-            if (stateCode == 3)
-                break;
-
-            if (stateCode == 127)
-                return Fail("Capture timed out before a readable state was reached.");
-
-            Thread.Sleep(3);
-        }
-
-        if (stateCode != 3)
-            return Fail($"Capture did not reach DSO-1102 ready state 3. Last state: {stateCode}.");
-
-        const int analysisSampleCount = 30_000;
-        const int guardBufferSamples = 1_048_576;
-
-        // The vendor DLL uses two six-word configuration blocks while decoding data.
-        // These conservative values match the already initialized CH1 / 1 ms/div /
-        // small-memory test setup closely enough for a first GND-baseline read.
-        // No configuration setter is called here.
-        var captureConfig = new ushort[]
-        {
-            1,  // trigger source: CH1 family value
-            0,  // selected channel: CH1
-            6,  // 1 ms/div family time-base index
-            50, // nominal 50% trigger position
-            0,  // small RAM
-            0
-        };
-
-        var channelConfig = new ushort[6];
-        var bufferA = new ushort[guardBufferSamples];
-        var bufferB = new ushort[guardBufferSamples];
-
-        var handles = new[]
-        {
-            GCHandle.Alloc(bufferA, GCHandleType.Pinned),
-            GCHandle.Alloc(bufferB, GCHandleType.Pinned),
-            GCHandle.Alloc(captureConfig, GCHandleType.Pinned),
-            GCHandle.Alloc(channelConfig, GCHandleType.Pinned)
-        };
-
-        ushort readResult;
-
-        try
-        {
-            readResult = getChannelData(
-                checked((ushort)deviceIndex),
-                handles[0].AddrOfPinnedObject(),
-                handles[1].AddrOfPinnedObject(),
-                handles[2].AddrOfPinnedObject(),
-                handles[3].AddrOfPinnedObject(),
-                triggerValue,
-                0,
-                0);
-        }
-        finally
-        {
-            foreach (var handle in handles)
-                if (handle.IsAllocated)
-                    handle.Free();
-        }
-
-        var a = bufferA.Take(analysisSampleCount).ToArray();
-        var b = bufferB.Take(analysisSampleCount).ToArray();
-        var allZeroA = a.All(x => x == 0);
-        var allZeroB = b.All(x => x == 0);
-        var waveformReadValid = readResult != 0 && !(allZeroA && allZeroB);
-
-        WriteJson(new
-        {
-            ok = true,
-            command = "capture-gnd",
-            deviceIndex,
-            capture = new
-            {
-                stateCode,
-                stateName = CaptureStateName(stateCode),
-                triggerValue,
-                vendorReadResult = readResult,
-                analysisSampleCountPerBuffer = analysisSampleCount,
-                sampleCountVerified = false,
-                configurationSource = "Original software initialized device; bridge performs no Set* call."
-            },
-            bufferA = SummarizeSamples(a),
-            bufferB = SummarizeSamples(b),
-            interpretation = new
-            {
-                waveformReadValid,
-                allZeroA,
-                allZeroB,
-                channelMapping = waveformReadValid
-                    ? "Unresolved by code. With CH1 physically tied to GND, the flatter/lower-noise buffer identifies CH1 empirically."
-                    : "Not evaluated because both output buffers remained unchanged/all-zero.",
-                voltageCalibrationApplied = false,
-                diagnostic = waveformReadValid
-                    ? "Vendor DLL populated at least one output buffer."
-                    : "Capture reached ready state, but dsoGetChannelData did not populate either output buffer. ABI/auxiliary parameters remain unverified."
-            },
-            safety = new
-            {
-                persistentConfigurationChanged = false,
-                calibrationWritten = false,
-                flashWritten = false,
-                deviceIdWritten = false,
-                configurationSettersCalled = false,
-                waveformRead = waveformReadValid
-            }
-        });
-
-        return 0;
-    }
-
     private static int CaptureGroundBaselineV2(
         string dllPath,
         string commandName,
@@ -630,8 +563,10 @@ internal static class Program
         double? decodedOutputReferenceRateHz = null,
         bool selfInitializeTimeBase = false,
         bool emitAdcPayload = false,
-        bool selfInitializeAnalog = false)
+        bool selfInitializeAnalog = false,
+        AnalogRequest? analog = null)
     {
+        analog ??= AnalogRequest.Default1VoltDc;
         using var library = VendorLibrary.Load(dllPath);
 
         var search = library.GetDelegate<DsoSearchDeviceDelegate>("dsoSearchDevice");
@@ -706,8 +641,10 @@ internal static class Program
                 return Fail("Analog self-initialization requested, but one or more verified vendor exports could not be resolved.");
             }
 
-            const ushort range1V = 6;
-            const ushort couplingDc = 0;
+            var range1 = analog.Channel1Range;
+            var range2 = analog.Channel2Range;
+            var coupling1 = analog.Channel1Coupling;
+            var coupling2 = analog.Channel2Coupling;
             const ushort triggerSourceCh1 = 0;
             const ushort centeredPosition = 128;
 
@@ -740,20 +677,20 @@ internal static class Program
             {
                 initLevelRangeResult = initLevelRange(deviceIndex);
                 filterVoltageResult = setFiltAndVoltageData(
-                    deviceIndex, 0, 0, range1V, range1V);
+                    deviceIndex, 0, 0, range1, range2);
                 filterResult = setFilt(deviceIndex, 0, 0, 0);
                 voltageCouplingResult = setVoltageAndCoupling(
                     deviceIndex,
-                    range1V,
-                    range1V,
-                    couplingDc,
-                    couplingDc,
+                    range1,
+                    range2,
+                    coupling1,
+                    coupling2,
                     triggerSourceCh1);
                 offsetResult = setOffset(
                     deviceIndex,
                     positionHandle.AddrOfPinnedObject(),
-                    range1V,
-                    range1V,
+                    range1,
+                    range2,
                     triggerSourceCh1,
                     calibrationHandle.AddrOfPinnedObject());
             }
@@ -766,12 +703,14 @@ internal static class Program
             analogInitialization = new
             {
                 transientOnly = true,
-                channel1RangeCode = range1V,
-                channel2RangeCode = range1V,
-                rangeLabel = "1 V/div",
-                channel1CouplingCode = couplingDc,
-                channel2CouplingCode = couplingDc,
-                couplingLabel = "DC",
+                channel1RangeCode = range1,
+                channel2RangeCode = range2,
+                channel1RangeLabel = AnalogRequest.RangeLabel(range1),
+                channel2RangeLabel = AnalogRequest.RangeLabel(range2),
+                channel1CouplingCode = coupling1,
+                channel2CouplingCode = coupling2,
+                channel1CouplingLabel = AnalogRequest.CouplingLabel(coupling1),
+                channel2CouplingLabel = AnalogRequest.CouplingLabel(coupling2),
                 channel1Filter = 0,
                 channel2Filter = 0,
                 triggerHfRejection = 0,
@@ -935,10 +874,15 @@ internal static class Program
         // current test setup is non-zero. Scanning the whole guard allocation
         // therefore gives a conservative estimate of how far the vendor call
         // actually populated each output buffer.
-        var writeExtentA = SummarizeBufferWriteExtent(bufferA, verifiedSampleCount);
-        var writeExtentB = SummarizeBufferWriteExtent(bufferB, verifiedSampleCount);
-        var fullBufferA = SummarizeFullBuffer(bufferA);
-        var fullBufferB = SummarizeFullBuffer(bufferB);
+        // Live frame commands only need the payload. The full-buffer diagnostics scan
+        // and group all 1,048,576 guard samples per channel and dominated the frame
+        // latency in Run mode, so they are reserved for the diagnostic commands.
+        // This is host-side computation only; the vendor call sequence is unchanged.
+        var leanFrame = emitAdcPayload;
+        object? writeExtentA = leanFrame ? null : SummarizeBufferWriteExtent(bufferA, verifiedSampleCount);
+        object? writeExtentB = leanFrame ? null : SummarizeBufferWriteExtent(bufferB, verifiedSampleCount);
+        object? fullBufferA = leanFrame ? null : SummarizeFullBuffer(bufferA);
+        object? fullBufferB = leanFrame ? null : SummarizeFullBuffer(bufferB);
         var allZeroA = a.All(x => x == 0);
         var allZeroB = b.All(x => x == 0);
 
@@ -1058,8 +1002,9 @@ internal static class Program
                 fullBufferB,
                 adcPayload
             },
-            bufferA = SummarizeSamples(a),
-            bufferB = SummarizeSamples(b),
+            bufferA = leanFrame ? null : SummarizeSamples(a),
+            bufferB = leanFrame ? null : SummarizeSamples(b),
+            diagnosticsOmitted = leanFrame,
             interpretation = new
             {
                 waveformReadValid,
@@ -1839,6 +1784,7 @@ internal static class Program
             if (!File.Exists(path))
                 throw new FileNotFoundException("DSO1102 vendor DLL was not found.", path);
 
+            VendorSdkIdentity.RequireKnownBinary(path);
             var module = LoadLibraryExW(path, IntPtr.Zero, LoadWithAlteredSearchPath);
             if (module == IntPtr.Zero)
                 throw new System.ComponentModel.Win32Exception(

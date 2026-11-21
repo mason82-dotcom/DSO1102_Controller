@@ -10,22 +10,31 @@ public static class FftAnalyzer
     public static IReadOnlyList<FrequencyBin> Analyze(
         IReadOnlyList<double> samples,
         double sampleRate,
-        WindowFunction window = WindowFunction.Hann)
+        WindowFunction window = WindowFunction.Hann,
+        bool removeMean = false)
     {
-        if (samples.Count < 2 || sampleRate <= 0)
+        if (samples.Count < 2 || !double.IsFinite(sampleRate) || sampleRate <= 0)
             return Array.Empty<FrequencyBin>();
 
         var n = HighestPowerOfTwo(samples.Count);
         var data = new Complex[n];
 
+        var mean = removeMean ? samples.Take(n).Average() : 0;
+        var windowSum = 0.0;
         for (var i = 0; i < n; i++)
-            data[i] = new Complex(samples[i] * WindowValue(window, i, n), 0);
+        {
+            if (!double.IsFinite(samples[i]))
+                throw new ArgumentException("FFT samples must be finite.", nameof(samples));
+            var weight = WindowValue(window, i, n);
+            windowSum += weight;
+            data[i] = new Complex((samples[i] - mean) * weight, 0);
+        }
 
         TransformInPlace(data);
 
-        var bins = new FrequencyBin[n / 2];
+        var bins = new FrequencyBin[n / 2 + 1];
         for (var i = 0; i < bins.Length; i++)
-            bins[i] = new FrequencyBin(i * sampleRate / n, 2.0 * data[i].Magnitude / n);
+            bins[i] = new FrequencyBin(i * sampleRate / n, (i == 0 || i == n / 2 ? 1.0 : 2.0) * data[i].Magnitude / windowSum);
 
         return bins;
     }
@@ -43,7 +52,7 @@ public static class FftAnalyzer
         if (n <= 1)
             return 1;
 
-        var p = 2.0 * Math.PI * i / (n - 1);
+        var p = 2.0 * Math.PI * i / n;
 
         return window switch
         {
